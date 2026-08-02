@@ -1,12 +1,53 @@
 import { useState } from "react";
 import { Button, Modal, Form, Input, message } from "antd";
-import { SettingOutlined } from "@ant-design/icons";
+import { UploadOutlined, SettingOutlined } from "@ant-design/icons";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 
+// 上传按钮组件（拖拽 + 点击上传 + 进度显示由 DocumentList 管理）
 export default function UploadButton() {
-  // 这个组件实际上处理设置弹窗
-  // UploadButton 在 DocumentList 中通过 antd Upload.Dragger 实现
-  return null;
+  const uploadDocument = useKnowledgeStore((s) => s.uploadDocument);
+  const [uploading, setUploading] = useState(false);
+
+  const handleSelectFile = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "文档",
+            extensions: ["pdf", "doc", "docx", "txt", "md"],
+          },
+        ],
+      });
+
+      if (selected && typeof selected === "string") {
+        setUploading(true);
+        const fileName =
+          selected.split("/").pop() ||
+          selected.split("\\").pop() ||
+          "unknown";
+        await uploadDocument(selected, fileName);
+        message.success(`${fileName} 上传成功`);
+      }
+    } catch (e) {
+      message.error("上传失败: " + e);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Button
+      type="primary"
+      icon={<UploadOutlined />}
+      loading={uploading}
+      onClick={handleSelectFile}
+      block
+    >
+      上传文档
+    </Button>
+  );
 }
 
 // LLM设置弹窗组件
@@ -25,7 +66,9 @@ export function LlmSettingsModal() {
       await setLlmConfig(values.baseUrl, values.apiKey, values.model);
       message.success("配置已保存");
     } catch (e) {
-      message.error("保存失败: " + e);
+      if (e instanceof Error && e.message) {
+        message.error("保存失败: " + e.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -33,7 +76,12 @@ export function LlmSettingsModal() {
 
   return (
     <Modal
-      title="LLM API 配置"
+      title={
+        <span>
+          <SettingOutlined style={{ marginRight: 8 }} />
+          LLM API 配置
+        </span>
+      }
       open={showSettings}
       onOk={handleSave}
       onCancel={() => setShowSettings(false)}
