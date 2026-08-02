@@ -38,41 +38,41 @@ body {
 /* 拖拽上传区域 */
 .upload-zone {
   margin: 0 12px 8px;
-  border: 2px dashed #d9d9d9;
+  border: 2px dashed var(--ant-color-border, #d9d9d9);
   border-radius: 8px;
   padding: 16px;
   text-align: center;
   cursor: pointer;
   transition: all 0.3s;
-  background: #fafafa;
+  background: var(--ant-color-fill-quaternary, #fafafa);
 }
 
 .upload-zone:hover {
-  border-color: #1677ff;
-  background: #f0f5ff;
+  border-color: var(--ant-color-primary, #1677ff);
+  background: var(--ant-color-primary-bg, #f0f5ff);
 }
 
 .upload-zone.dragging {
-  border-color: #1677ff;
-  background: #e6f4ff;
+  border-color: var(--ant-color-primary, #1677ff);
+  background: var(--ant-color-primary-bg-hover, #e6f4ff);
   transform: scale(1.02);
 }
 
 .upload-zone-icon {
   font-size: 28px;
-  color: #1677ff;
+  color: var(--ant-color-primary, #1677ff);
   margin-bottom: 4px;
 }
 
 .upload-zone-text {
   font-size: 13px;
-  color: #333;
+  color: var(--ant-color-text, #333);
   font-weight: 500;
 }
 
 .upload-zone-hint {
   font-size: 11px;
-  color: #999;
+  color: var(--ant-color-text-tertiary, #999);
   margin-top: 2px;
 }
 
@@ -96,7 +96,7 @@ body {
 }
 
 .doc-card:hover {
-  background: #f5f5f5;
+  background: var(--ant-color-fill-quaternary, #f5f5f5);
 }
 
 .doc-card-icon {
@@ -112,7 +112,7 @@ body {
 .doc-card-name {
   font-size: 13px;
   font-weight: 500;
-  color: #333;
+  color: var(--ant-color-text, #333);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -120,7 +120,7 @@ body {
 
 .doc-card-meta {
   font-size: 11px;
-  color: #999;
+  color: var(--ant-color-text-tertiary, #999);
   margin-top: 2px;
   display: flex;
   align-items: center;
@@ -137,16 +137,16 @@ body {
 }
 
 .status-dot.ready {
-  background: #52c41a;
+  background: var(--ant-color-success, #52c41a);
 }
 
 .status-dot.processing {
-  background: #faad14;
+  background: var(--ant-color-warning, #faad14);
   animation: pulse 1.2s infinite;
 }
 
 .status-dot.failed {
-  background: #ff4d4f;
+  background: var(--ant-color-error, #ff4d4f);
 }
 
 @keyframes pulse {
@@ -168,8 +168,8 @@ body {
 
 /* 顶部标题栏 */
 .chat-header {
-  padding: 14px 64px 14px 56px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -200,7 +200,7 @@ body {
   max-width: 75%;
   padding: 10px 16px;
   border-radius: 18px 18px 4px 18px;
-  background: #1677ff;
+  background: var(--ant-color-primary, #1677ff);
   color: #fff;
   word-break: break-word;
   font-size: 14px;
@@ -217,8 +217,8 @@ body {
   max-width: 75%;
   padding: 12px 16px;
   border-radius: 18px 18px 18px 4px;
-  background: #f0f0f0;
-  color: #1a1a1a;
+  background: var(--ant-color-fill-secondary, #f0f0f0);
+  color: var(--ant-color-text, #1a1a1a);
   word-break: break-word;
   font-size: 14px;
   line-height: 1.7;
@@ -226,7 +226,7 @@ body {
 
 /* AI消息内 Markdown 样式 */
 .message-bubble .md-content pre {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
   padding: 8px 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -235,7 +235,7 @@ body {
 }
 
 .message-bubble .md-content code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 13px;
@@ -263,7 +263,7 @@ body {
   display: inline-block;
   width: 7px;
   height: 16px;
-  background: #1677ff;
+  background: var(--ant-color-primary, #1677ff);
   margin-left: 2px;
   vertical-align: text-bottom;
   animation: blink 1s infinite;
@@ -290,7 +290,7 @@ body {
 .citation-header {
   font-size: 12px;
   font-weight: 600;
-  color: #888;
+  color: var(--ant-color-text-tertiary, #888);
   margin-bottom: 6px;
   display: flex;
   align-items: center;
@@ -301,21 +301,21 @@ body {
 .citation-card {
   margin-top: 6px;
   padding: 10px 12px;
-  background: #fafafa;
-  border-left: 3px solid #1677ff;
+  background: var(--ant-color-fill-quaternary, #fafafa);
+  border-left: 3px solid var(--ant-color-primary, #1677ff);
   border-radius: 0 6px 6px 0;
   font-size: 12px;
-  color: #666;
+  color: var(--ant-color-text-secondary, #666);
   line-height: 1.6;
   transition: background 0.2s;
 }
 
 .citation-card:hover {
-  background: #f0f5ff;
+  background: var(--ant-color-primary-bg, #f0f5ff);
 }
 
 .citation-card.expanded {
-  background: #f0f5ff;
+  background: var(--ant-color-primary-bg, #f0f5ff);
 }
 
 .citation-meta {
@@ -337,8 +337,8 @@ body {
 /* 输入区 */
 .chat-input-area {
   flex-shrink: 0;
-  border-top: 1px solid #f0f0f0;
-  background: #fff;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  background: var(--ant-color-bg-container, #fff);
   padding: 16px 24px 20px;
 }
 
@@ -370,13 +370,13 @@ body {
 .empty-chat-title {
   font-size: 24px;
   font-weight: 600;
-  color: #333;
+  color: var(--ant-color-text, #333);
   margin-bottom: 8px;
 }
 
 .empty-chat-desc {
   font-size: 14px;
-  color: #999;
+  color: var(--ant-color-text-tertiary, #999);
   margin-bottom: 28px;
 }
 
@@ -386,24 +386,38 @@ body {
   gap: 10px;
   max-width: 420px;
   width: 100%;
+  margin: 0 auto;
+  padding: 0 24px 40px;
+}
+
+/* 空状态包裹（EmptyState + 建议问题） */
+.chat-empty-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-empty-top {
+  flex: 1;
+  min-height: 0;
 }
 
 .suggestion-item {
   padding: 14px 18px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--ant-color-border, #e8e8e8);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 13px;
-  color: #555;
+  color: var(--ant-color-text-secondary, #555);
   text-align: left;
-  background: #fff;
+  background: var(--ant-color-bg-container, #fff);
 }
 
 .suggestion-item:hover {
-  border-color: #1677ff;
-  background: #f0f5ff;
-  color: #1677ff;
+  border-color: var(--ant-color-primary, #1677ff);
+  background: var(--ant-color-primary-bg, #f0f5ff);
+  color: var(--ant-color-primary, #1677ff);
 }
 
 /* 加载中加载点 */
@@ -417,7 +431,7 @@ body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #999;
+  background: var(--ant-color-text-tertiary, #999);
   animation: typing-bounce 1.4s infinite;
 }
 
@@ -453,10 +467,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d9d9d9;
+  background: var(--ant-color-border, #d9d9d9);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #bfbfbf;
+  background: var(--ant-color-text-quaternary, #bfbfbf);
 }

@@ -48,6 +48,8 @@ interface KnowledgeState {
   // 对话历史
   messages: ChatMessage[];
   asking: boolean;
+  askError: string | null;
+  lastQuestion: string | null;
 
   // LLM配置
   llmConfig: LlmConfig | null;
@@ -58,6 +60,7 @@ interface KnowledgeState {
   uploadDocument: (filePath: string, fileName: string) => Promise<void>;
   deleteDocument: (docId: string) => Promise<void>;
   askQuestion: (question: string) => Promise<void>;
+  retryLastQuestion: () => Promise<void>;
   loadLlmConfig: () => Promise<void>;
   setLlmConfig: (baseUrl: string, apiKey: string, model: string) => Promise<void>;
   setShowSettings: (show: boolean) => void;
@@ -69,6 +72,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   loadingDocs: false,
   messages: [],
   asking: false,
+  askError: null,
+  lastQuestion: null,
   llmConfig: null,
   showSettings: false,
 
@@ -116,13 +121,21 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage],
       asking: true,
+      askError: null,
+      lastQuestion: question,
     }));
+    await get().retryLastQuestion();
+  },
 
+  retryLastQuestion: async () => {
+    const question = get().lastQuestion;
+    if (!question) return;
+    set({ asking: true, askError: null });
     try {
       const result = await invoke<{
         answer: string;
         citations: Citation[];
-      }>("ask_question", { question: question });
+      }>("ask_question", { question });
 
       const assistantMessage: ChatMessage = {
         role: "assistant",
@@ -133,17 +146,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       set((state) => ({
         messages: [...state.messages, assistantMessage],
         asking: false,
+        askError: null,
       }));
     } catch (e) {
-      const errorMessage: ChatMessage = {
-        role: "assistant",
-        content: `回答失败: ${e}`,
-        timestamp: Date.now(),
-      };
-      set((state) => ({
-        messages: [...state.messages, errorMessage],
-        asking: false,
-      }));
+      set({ asking: false, askError: String(e) });
     }
   },
 
@@ -173,5 +179,5 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
   setShowSettings: (show: boolean) => set({ showSettings: show }),
 
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () => set({ messages: [], askError: null, lastQuestion: null }),
 }));

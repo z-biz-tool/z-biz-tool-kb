@@ -1,15 +1,18 @@
 import { useState } from "react";
-import { Button, Modal, Form, Input, message } from "antd";
+import { Button, Modal, Form, Input, message, Progress } from "antd";
 import { UploadOutlined, SettingOutlined } from "@ant-design/icons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 
-// 上传按钮组件（拖拽 + 点击上传 + 进度显示由 DocumentList 管理）
+// 上传按钮组件（点击上传 + 进度显示 + 成功/失败反馈）
 export default function UploadButton() {
   const uploadDocument = useKnowledgeStore((s) => s.uploadDocument);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [currentFile, setCurrentFile] = useState<string>("");
 
   const handleSelectFile = async () => {
+    if (uploading) return;
     try {
       const selected = await open({
         multiple: false,
@@ -22,31 +25,75 @@ export default function UploadButton() {
       });
 
       if (selected && typeof selected === "string") {
+        const fileName = selected.split("/").pop() || selected.split("\\").pop() || "unknown";
+        setCurrentFile(fileName);
         setUploading(true);
-        const fileName =
-          selected.split("/").pop() ||
-          selected.split("\\").pop() ||
-          "unknown";
-        await uploadDocument(selected, fileName);
-        message.success(`${fileName} 上传成功`);
+        setUploadProgress(10);
+
+        // 模拟进度（invoke 为单次调用，无真实进度事件）
+        const timer = setInterval(() => {
+          setUploadProgress((p) => (p < 90 ? p + 5 : p));
+        }, 200);
+
+        try {
+          setUploadProgress(40);
+          await uploadDocument(selected, fileName);
+          clearInterval(timer);
+          setUploadProgress(100);
+          message.success(`${fileName} 上传成功`);
+          setTimeout(() => {
+            setUploading(false);
+            setUploadProgress(0);
+            setCurrentFile("");
+          }, 500);
+        } catch (e) {
+          clearInterval(timer);
+          setUploading(false);
+          setUploadProgress(0);
+          setCurrentFile("");
+          message.error(`上传失败: ${e}`);
+        }
       }
     } catch (e) {
-      message.error("上传失败: " + e);
-    } finally {
       setUploading(false);
+      setUploadProgress(0);
+      setCurrentFile("");
+      message.error(`选择文件失败: ${e}`);
     }
   };
 
   return (
-    <Button
-      type="primary"
-      icon={<UploadOutlined />}
-      loading={uploading}
-      onClick={handleSelectFile}
-      block
-    >
-      上传文档
-    </Button>
+    <div>
+      <Button
+        type="primary"
+        icon={<UploadOutlined />}
+        loading={uploading}
+        onClick={handleSelectFile}
+        block
+      >
+        {uploading ? "上传中..." : "上传文档"}
+      </Button>
+      {uploading && (
+        <div style={{ marginTop: 6 }}>
+          {currentFile && (
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--ant-color-text-secondary)",
+                marginBottom: 2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={currentFile}
+            >
+              {currentFile}
+            </div>
+          )}
+          <Progress percent={uploadProgress} size="small" status="active" />
+        </div>
+      )}
+    </div>
   );
 }
 

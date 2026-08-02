@@ -144,14 +144,14 @@ pub async fn ask_question(
         });
     }
 
-    // 构建引用信息
+    // 构建引用信息（保留完整切片文本，由前端展开查看）
     let citations: Vec<Citation> = top_chunks
         .iter()
         .map(|(chunk, score)| Citation {
             doc_id: chunk.doc_id.clone(),
             doc_name: chunk.doc_name.clone(),
             chunk_index: chunk.index,
-            text: chunk.text.chars().take(200).collect(),
+            text: chunk.text.clone(),
             score: *score,
         })
         .collect();

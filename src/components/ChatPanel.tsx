@@ -10,6 +10,7 @@ import {
 } from "@ant-design/icons";
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 import type { Citation, ChatMessage } from "../stores/knowledgeStore";
+import { EmptyState, ErrorState } from "../_shared";
 
 const { Text } = Typography;
 
@@ -31,9 +32,7 @@ function renderMarkdown(content: string): React.ReactNode {
     // 代码块处理
     if (line.trim().startsWith("```")) {
       if (inCodeBlock) {
-        elements.push(
-          <pre key={`code-${idx}`}>{codeBuffer.join("\n")}</pre>
-        );
+        elements.push(<pre key={`code-${idx}`}>{codeBuffer.join("\n")}</pre>);
         codeBuffer = [];
         inCodeBlock = false;
       } else {
@@ -98,14 +97,8 @@ function renderInlineCode(text: string): React.ReactNode {
   });
 }
 
-// 引用溯源卡片
-function CitationCard({
-  citation,
-  index,
-}: {
-  citation: Citation;
-  index: number;
-}) {
+// 引用溯源卡片：展开后显示完整内容（不截断）
+function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = citation.text.length > 150;
 
@@ -118,9 +111,8 @@ function CitationCard({
         <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>
           {citation.doc_name}
         </Tag>
-        <span style={{ color: "#999", fontSize: 10 }}>
-          切片 #{citation.chunk_index} · 相关度{" "}
-          {(citation.score * 100).toFixed(1)}%
+        <span style={{ color: "var(--ant-color-text-tertiary)", fontSize: 10 }}>
+          切片 #{citation.chunk_index} · 相关度 {(citation.score * 100).toFixed(1)}%
         </span>
         {isLong && (
           <span style={{ color: "#1677ff", fontSize: 10, marginLeft: "auto" }}>
@@ -134,7 +126,7 @@ function CitationCard({
       >
         {citation.text}
       </div>
-      <div style={{ marginTop: 4, fontSize: 10, color: "#bbb" }}>
+      <div style={{ marginTop: 4, fontSize: 10, color: "var(--ant-color-text-quaternary)" }}>
         引用 #{index + 1}
       </div>
     </div>
@@ -149,30 +141,22 @@ function CitationsSection({ citations }: { citations: Citation[] }) {
 
   return (
     <div className="citations-section">
-      <div
-        className="citation-header"
-        onClick={() => setCollapsed(!collapsed)}
-      >
+      <div className="citation-header" onClick={() => setCollapsed(!collapsed)}>
         <PaperClipOutlined />
         <span>引用溯源 ({citations.length})</span>
-        {collapsed ? <DownOutlined style={{ fontSize: 10 }} /> : <UpOutlined style={{ fontSize: 10 }} />}
+        {collapsed ? (
+          <DownOutlined style={{ fontSize: 10 }} />
+        ) : (
+          <UpOutlined style={{ fontSize: 10 }} />
+        )}
       </div>
-      {!collapsed &&
-        citations.map((cit, i) => (
-          <CitationCard key={i} citation={cit} index={i} />
-        ))}
+      {!collapsed && citations.map((cit, i) => <CitationCard key={i} citation={cit} index={i} />)}
     </div>
   );
 }
 
 // 单条消息
-function MessageItem({
-  msg,
-  isTyping,
-}: {
-  msg: ChatMessage;
-  isTyping: boolean;
-}) {
+function MessageItem({ msg, isTyping }: { msg: ChatMessage; isTyping: boolean }) {
   const isUser = msg.role === "user";
 
   return (
@@ -208,7 +192,9 @@ function MessageItem({
 export default function ChatPanel() {
   const messages = useKnowledgeStore((s) => s.messages);
   const asking = useKnowledgeStore((s) => s.asking);
+  const askError = useKnowledgeStore((s) => s.askError);
   const askQuestion = useKnowledgeStore((s) => s.askQuestion);
+  const retryLastQuestion = useKnowledgeStore((s) => s.retryLastQuestion);
   const clearMessages = useKnowledgeStore((s) => s.clearMessages);
   const documents = useKnowledgeStore((s) => s.documents);
 
@@ -221,7 +207,7 @@ export default function ChatPanel() {
   // 自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, displayedText]);
+  }, [messages, displayedText, asking, askError]);
 
   // 打字机效果: 当新的AI消息到来时，逐字显示
   useEffect(() => {
@@ -328,26 +314,18 @@ export default function ChatPanel() {
 
       {/* 消息列表 / 空状态 */}
       <div className="chat-messages">
-        {messages.length === 0 ? (
-          <div className="empty-chat">
-            <RobotOutlined className="empty-chat-icon" />
-            <div className="empty-chat-title">
-              {documents.length === 0
-                ? "欢迎使用知识库问答"
-                : "开始与你的知识库对话"}
-            </div>
-            <div className="empty-chat-desc">
-              {documents.length === 0
-                ? "请先在左侧上传文档，然后就可以基于文档内容进行智能问答了"
-                : "在下方输入问题，我会基于已上传的文档为你提供精准回答"}
+        {messages.length === 0 && !askError ? (
+          <div className="chat-empty-wrap">
+            <div className="chat-empty-top">
+              <EmptyState
+                icon={<RobotOutlined style={{ fontSize: 56, color: "#1677ff", opacity: 0.7 }} />}
+                title="开始提问"
+                description="向知识库提问，获取基于文档的AI回答"
+              />
             </div>
             <div className="suggestion-list">
               {suggestions.map((s, i) => (
-                <div
-                  key={i}
-                  className="suggestion-item"
-                  onClick={() => handleSend(s)}
-                >
+                <div key={i} className="suggestion-item" onClick={() => handleSend(s)}>
                   {s}
                 </div>
               ))}
@@ -363,9 +341,7 @@ export default function ChatPanel() {
                     <div style={{ marginBottom: 4, opacity: 0.6 }}>
                       <RobotOutlined /> AI
                     </div>
-                    <span style={{ marginRight: 8 }}>
-                      正在检索知识库
-                    </span>
+                    <span style={{ marginRight: 8 }}>正在思考...</span>
                     <span className="typing-dots">
                       <span />
                       <span />
@@ -373,6 +349,11 @@ export default function ChatPanel() {
                     </span>
                   </div>
                 </div>
+              </div>
+            )}
+            {!asking && askError && (
+              <div className="chat-message-wrap">
+                <ErrorState message={askError} onRetry={() => retryLastQuestion()} />
               </div>
             )}
             <div ref={messagesEndRef} />
