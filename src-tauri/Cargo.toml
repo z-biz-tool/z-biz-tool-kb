@@ -1,5 +1,6 @@
 [package]
-name = "z-biz-tool-knowledge"version = "0.2.0"
+name = "z-biz-tool-knowledge"
+version = "0.2.0"
 description = "知识管理+RAG问答"
 edition = "2021"
 
