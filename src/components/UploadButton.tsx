@@ -4,6 +4,9 @@ import { UploadOutlined, SettingOutlined } from "@ant-design/icons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 
+const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
+
 // 上传按钮组件（点击上传 + 进度显示 + 成功/失败反馈）
 export default function UploadButton() {
   const uploadDocument = useKnowledgeStore((s) => s.uploadDocument);
@@ -51,53 +54,92 @@ export default function UploadButton() {
           setUploading(false);
           setUploadProgress(0);
           setCurrentFile("");
-          message.error(`上传失败: ${e}`);
+          message.error(`上传失败：${e}`);
         }
       }
     } catch (e) {
       setUploading(false);
       setUploadProgress(0);
       setCurrentFile("");
-      message.error(`选择文件失败: ${e}`);
+      message.error(`选择文件失败：${e}`);
     }
   };
 
   return (
-    <div>
+    <div style={{
+      background: cardBgGradient,
+      borderRadius: 10,
+      padding: 12,
+      border: `1px solid rgba(102,126,234,0.15)`,
+      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+    }}
+    onMouseEnter={(e) => {
+      (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 12px rgba(102,126,234,0.15)";
+      (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.3)";
+    }}
+    onMouseLeave={(e) => {
+      (e.currentTarget as HTMLElement).style.boxShadow = "none";
+      (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.15)";
+    }}>
       <Button
         type="primary"
         icon={<UploadOutlined />}
         loading={uploading}
         onClick={handleSelectFile}
         block
+        style={{
+          background: brandGradient,
+          border: "none",
+          borderRadius: 8,
+          boxShadow: "0 4px 12px rgba(102,126,234,0.3)",
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.transform = "scale(1.02)";
+          (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 16px rgba(102,126,234,0.4)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.transform = "scale(1)";
+          (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 12px rgba(102,126,234,0.3)";
+        }}
       >
         {uploading ? "上传中..." : "上传文档"}
       </Button>
       {uploading && (
-        <div style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 10 }}>
           {currentFile && (
             <div
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 color: "var(--ant-color-text-secondary)",
-                marginBottom: 2,
+                marginBottom: 6,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                fontWeight: 500,
               }}
               title={currentFile}
             >
               {currentFile}
             </div>
           )}
-          <Progress percent={uploadProgress} size="small" status="active" />
+          <Progress 
+            percent={uploadProgress} 
+            size="small" 
+            status="active"
+            strokeColor={{
+              '0%': '#667eea',
+              '100%': '#764ba2',
+            }}
+            style={{ borderRadius: 4 }}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// LLM设置弹窗组件
+// LLM 设置弹窗组件
 export function LlmSettingsModal() {
   const [form] = Form.useForm();
   const showSettings = useKnowledgeStore((s) => s.showSettings);
@@ -114,7 +156,7 @@ export function LlmSettingsModal() {
       message.success("配置已保存");
     } catch (e) {
       if (e instanceof Error && e.message) {
-        message.error("保存失败: " + e.message);
+        message.error("保存失败：" + e.message);
       }
     } finally {
       setSaving(false);
@@ -124,8 +166,15 @@ export function LlmSettingsModal() {
   return (
     <Modal
       title={
-        <span>
-          <SettingOutlined style={{ marginRight: 8 }} />
+        <span style={{
+          background: brandGradient,
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          <SettingOutlined />
           LLM API 配置
         </span>
       }
@@ -135,6 +184,18 @@ export function LlmSettingsModal() {
       confirmLoading={saving}
       okText="保存"
       cancelText="取消"
+      style={{
+        borderRadius: 12,
+        overflow: "hidden",
+      }}
+      bodyStyle={{
+        padding: "20px",
+      }}
+      footerStyle={{
+        padding: "12px 20px",
+        borderTop: `1px solid var(--ant-color-border-secondary)`,
+        background: "#fafafa",
+      }}
     >
       <Form
         form={form}
@@ -149,23 +210,44 @@ export function LlmSettingsModal() {
         <Form.Item
           name="baseUrl"
           label="API Base URL"
-          rules={[{ required: true, message: "请输入API Base URL" }]}
+          rules={[{ required: true, message: "请输入 API Base URL" }]}
+          style={{ marginBottom: 16 }}
         >
-          <Input placeholder="https://api.openai.com/v1" />
+          <Input 
+            placeholder="https://api.openai.com/v1"
+            style={{
+              borderRadius: 6,
+              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+            }}
+          />
         </Form.Item>
         <Form.Item
           name="apiKey"
           label="API Key"
-          rules={[{ required: true, message: "请输入API Key" }]}
+          rules={[{ required: true, message: "请输入 API Key" }]}
+          style={{ marginBottom: 16 }}
         >
-          <Input.Password placeholder="sk-..." />
+          <Input.Password 
+            placeholder="sk-..."
+            style={{
+              borderRadius: 6,
+              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+            }}
+          />
         </Form.Item>
         <Form.Item
           name="model"
           label="模型名称"
           rules={[{ required: true, message: "请输入模型名称" }]}
+          style={{ marginBottom: 20 }}
         >
-          <Input placeholder="gpt-4o-mini" />
+          <Input 
+            placeholder="gpt-4o-mini"
+            style={{
+              borderRadius: 6,
+              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+            }}
+          />
         </Form.Item>
       </Form>
     </Modal>

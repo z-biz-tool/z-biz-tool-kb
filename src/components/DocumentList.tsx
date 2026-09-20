@@ -13,6 +13,9 @@ import { useKnowledgeStore } from "../stores/knowledgeStore";
 import type { DocumentInfo } from "../stores/knowledgeStore";
 import { EmptyState } from "../_shared";
 
+const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
+const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
+
 // 文档类型图标
 function getDocIcon(docType: string) {
   switch (docType) {
@@ -100,12 +103,34 @@ export default function DocumentList() {
 
   return (
     <div className="doc-sidebar">
-      {/* 顶部标题 */}
-      <div className="doc-sidebar-header">
-        <FileOutlined style={{ fontSize: 18, color: "#1677ff" }} />
-        <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>文档库</span>
+      {/* 顶部标题 - 卡片化设计 */}
+      <div className="doc-sidebar-header" style={{
+        background: cardBgGradient,
+        borderRadius: 12,
+        padding: "12px 16px",
+        marginBottom: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 12px rgba(102,126,234,0.15)";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.boxShadow = "none";
+      }}>
+        <span style={{ 
+          fontSize: 18,
+          background: brandGradient,
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+        }}>
+          <FileOutlined />
+        </span>
+        <span style={{ fontWeight: 600, fontSize: 15, flex: 1, background: brandGradient, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>文档库</span>
         {documents.length > 0 && (
-          <Tag color="blue" style={{ fontSize: 11 }}>
+          <Tag color="blue" style={{ fontSize: 11, borderRadius: 4 }}>
             {documents.length} 篇
           </Tag>
         )}
@@ -115,12 +140,23 @@ export default function DocumentList() {
             size="small"
             icon={<ReloadOutlined />}
             onClick={() => loadDocuments()}
+            style={{
+              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = "#667eea";
+              (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = "";
+              (e.currentTarget as HTMLElement).style.transform = "";
+            }}
           />
         </Tooltip>
       </div>
 
-      {/* 搜索框 */}
-      <div className="doc-search">
+      {/* 搜索框 - 焦点阴影增强 */}
+      <div className="doc-search" style={{ marginBottom: 10 }}>
         <Input
           prefix={<SearchOutlined style={{ color: "#bfbfbf" }} />}
           placeholder="搜索文档..."
@@ -128,6 +164,19 @@ export default function DocumentList() {
           onChange={(e) => setSearchKeyword(e.target.value)}
           allowClear
           size="middle"
+          style={{
+            borderRadius: 8,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
+            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.boxShadow = '0 2px 12px rgba(102,126,234,0.2)';
+            e.currentTarget.style.border = '1px solid rgba(102,126,234,0.3)';
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.04)';
+            e.currentTarget.style.border = '';
+          }}
         />
       </div>
 
@@ -146,23 +195,50 @@ export default function DocumentList() {
             />
           </div>
         ) : (
-          filteredDocs.map((doc) => {
+          filteredDocs.map((doc, index) => {
             const statusInfo = getStatusInfo(doc.status);
             return (
-              <div key={doc.id} className="doc-card">
+              <div key={doc.id} className="doc-card" style={{
+                background: cardBgGradient,
+                borderRadius: 10,
+                padding: "12px 14px",
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                cursor: "pointer",
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                border: `1px solid rgba(102,126,234,${index % 2 === 0 ? 0.08 : 0.12})`,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(102,126,234,0.15)";
+                (e.currentTarget as HTMLElement).style.transform = "translateX(4px)";
+                (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.3)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.boxShadow = "none";
+                (e.currentTarget as HTMLElement).style.transform = "";
+                (e.currentTarget as HTMLElement).style.borderColor = `rgba(102,126,234,${index % 2 === 0 ? 0.08 : 0.12})`;
+              }}>
                 <span className="doc-card-icon">{getDocIcon(doc.doc_type)}</span>
-                <div className="doc-card-info">
-                  <div className="doc-card-name" title={doc.name}>
+                <div className="doc-card-info" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="doc-card-name" title={doc.name} style={{
+                    fontWeight: 500,
+                    fontSize: 13,
+                    background: brandGradient,
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                  }}>
                     {doc.name}
                   </div>
-                  <div className="doc-card-meta">
-                    <span className={`status-dot ${statusInfo.className}`} />
+                  <div className="doc-card-meta" style={{ fontSize: 11, color: "var(--ant-color-text-secondary)", marginTop: 4 }}>
+                    <span className={`status-dot ${statusInfo.className}`} style={{ marginRight: 4 }} />
                     <span>{statusInfo.label}</span>
-                    <span>·</span>
+                    <span style={{ margin: "0 4px" }}>·</span>
                     <span>{formatSize(doc.size)}</span>
-                    <span>·</span>
+                    <span style={{ margin: "0 4px" }}>·</span>
                     <span>{doc.chunk_count} 切片</span>
-                    <span>·</span>
+                    <span style={{ margin: "0 4px" }}>·</span>
                     <span>{formatTime(doc.created_at)}</span>
                   </div>
                 </div>
@@ -175,6 +251,17 @@ export default function DocumentList() {
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDelete(doc);
+                    }}
+                    style={{
+                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
+                      (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(255,77,79,0.3)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.transform = "";
+                      (e.currentTarget as HTMLElement).style.boxShadow = "none";
                     }}
                   />
                 </Tooltip>
