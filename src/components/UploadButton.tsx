@@ -191,11 +191,6 @@ export function LlmSettingsModal() {
       bodyStyle={{
         padding: "20px",
       }}
-      footerStyle={{
-        padding: "12px 20px",
-        borderTop: `1px solid var(--ant-color-border-secondary)`,
-        background: "#fafafa",
-      }}
     >
       <Form
         form={form}

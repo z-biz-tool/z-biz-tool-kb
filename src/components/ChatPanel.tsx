@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Input, Button, Typography, Tag, Tooltip } from "antd";
+import { Input, Button, Typography, Tag, Tooltip, Space } from "antd";
 import {
   SendOutlined,
   ClearOutlined,
