@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "z-biz-tool-knowledge",
+  "productName": "z-biz-tool-kb",
   "version": "0.2.0",
-  "identifier": "com.zifang.z-biz-tool-knowledge",
+  "identifier": "com.zifang.z-biz-tool-kb",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "z-biz-tool-knowledge",
+        "title": "z-biz-tool-kb",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

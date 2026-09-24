@@ -1,4 +1,4 @@
-# z-biz-tool-knowledge
+# z-biz-tool-kb
 
 知识管理 + RAG问答桌面应用，基于 Tauri 2.0 + React 19 + Ant Design 6 + TypeScript。
 

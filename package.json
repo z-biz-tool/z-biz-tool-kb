@@ -1,5 +1,5 @@
 {
-  "name": "z-biz-tool-knowledge",
+  "name": "z-biz-tool-kb",
   "version": "0.2.0",
   "description": "知识管理+RAG问答",
   "type": "module",

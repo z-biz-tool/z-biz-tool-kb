@@ -38,7 +38,7 @@ export default function App() {
     <ThemeProvider>
       <ConfigProvider locale={zhCN}>
         <AppShell
-          title="z-biz-tool-knowledge"
+          title="z-biz-tool-kb"
           icon={<BookOutlined />}
           sidebar={sidebar}
           headerExtra={headerExtra}
