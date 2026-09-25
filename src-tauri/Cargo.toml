@@ -3,6 +3,7 @@ name = "z-biz-tool-kb"
 version = "0.2.0"
 description = "知识管理+RAG问答"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "z_biz_tool_knowledge_lib"
