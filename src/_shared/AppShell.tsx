@@ -15,6 +15,7 @@ interface AppShellProps {
   headerExtra?: ReactNode;
   children: ReactNode;
   siderWidth?: number;
+  sidebarCollapsed?: boolean;
 }
 
 export function AppShell({
@@ -24,6 +25,7 @@ export function AppShell({
   headerExtra,
   children,
   siderWidth = 220,
+  sidebarCollapsed = false,
 }: AppShellProps) {
   const { mode, toggle } = useTheme();
   const { token } = theme.useToken();
@@ -83,16 +85,18 @@ export function AppShell({
           </Space>
         </Header>
         <Layout>
-          <Sider
-            width={siderWidth}
-            style={{
-              background: cardBgGradient,
-              borderRight: `1px solid ${token.colorBorderSecondary}`,
-              overflow: "auto",
-            }}
-          >
-            {sidebar}
-          </Sider>
+          {!sidebarCollapsed && (
+            <Sider
+              width={siderWidth}
+              style={{
+                background: cardBgGradient,
+                borderRight: `1px solid ${token.colorBorderSecondary}`,
+                overflow: "auto",
+              }}
+            >
+              {sidebar}
+            </Sider>
+          )}
           <Content style={{ overflow: "auto", background: token.colorBgLayout }}>{children}</Content>
         </Layout>
       </Layout>

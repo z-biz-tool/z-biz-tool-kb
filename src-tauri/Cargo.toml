@@ -6,7 +6,7 @@ edition = "2021"
 license = "MIT"
 
 [lib]
-name = "z_biz_tool_knowledge_lib"
+name = "z_biz_tool_kb_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]
@@ -24,3 +24,5 @@ getrandom = "0.2"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
+pdf-extract = "0.12.1"
+zip = "8.6.0"

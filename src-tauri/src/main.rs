@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    z_biz_tool_knowledge_lib::run()
+    z_biz_tool_kb_lib::run()
 }

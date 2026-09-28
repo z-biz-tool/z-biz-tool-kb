@@ -16,9 +16,14 @@ pub struct DocumentInfo {
     pub status: String,
 }
 
+/// 入库的物理预算：解析一份百页 PDF 是 CPU 密集的分钟级工作，
+/// 没有上限的话一次上传就能把应用钉死；字符上限保证检索端不会抱着一个 G 级 json 文件。
+const MAX_UPLOAD_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_INDEX_CHARS: usize = 4_000_000;
+
 /// 上传文档命令
 #[tauri::command]
-pub fn upload_document(
+pub async fn upload_document(
     app: AppHandle,
     file_path: String,
     file_name: String,
@@ -29,48 +34,68 @@ pub fn upload_document(
     if !source.exists() {
         return Err(format!("文件不存在: {}", file_path));
     }
-
     let file_size = std::fs::metadata(&source)
         .map_err(|e| format!("获取文件大小失败: {}", e))?
         .len();
-
-    // 根据扩展名判断文档类型
+    if file_size > MAX_UPLOAD_BYTES {
+        return Err(format!(
+            "这份文件 {:.1} MB，超过单次入库上限 64 MB。先拆成几份再上传，\
+             大文件整体解析会长时间占住入库线程",
+            file_size as f64 / 1048576.0
+        ));
+    }
+    // 认不得的类型在这里就挡掉，不让它走到读字节那一步
     let doc_type = rag::get_doc_type(&file_name);
+    if doc_type == "unknown" {
+        return Err(format!(
+            "{} 不是可入库的类型（支持 pdf / docx / pptx / md / txt / csv / log）",
+            file_name
+        ));
+    }
 
-    // 读取文件内容并切片
-    let content = rag::read_file_content(&source, &doc_type)?;
-    let chunks = rag::split_text(&content, 500, 100);
-
-    // 生成文档ID
-    let doc_id = format!(
-        "{}_{}",
-        file_name
-            .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', ""),
-        chrono::Utc::now().timestamp()
-    );
-
-    // 保存文档到存储
-    let doc_meta = rag::DocumentMeta {
-        id: doc_id.clone(),
-        name: file_name.clone(),
-        size: file_size,
-        doc_type: doc_type.clone(),
-        chunk_count: chunks.len(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        status: "ready".to_string(),
-    };
-
-    rag::save_document(&data_dir, &doc_meta, &chunks)?;
-
-    Ok(DocumentInfo {
-        id: doc_meta.id,
-        name: doc_meta.name,
-        size: doc_meta.size,
-        doc_type: doc_meta.doc_type,
-        chunk_count: doc_meta.chunk_count,
-        created_at: doc_meta.created_at,
-        status: doc_meta.status,
+    // 解析 + 切片 + 落盘是分钟级 CPU 活，不能留在 IPC 线程上跑
+    let path = source.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let content = rag::read_file_content(&path, &doc_type)?;
+        if content.chars().count() > MAX_INDEX_CHARS {
+            return Err(format!(
+                "这份文档取出了超过 {} 万字符的文字，超出单篇入库上限，请先拆分",
+                MAX_INDEX_CHARS / 10_000
+            ));
+        }
+        let chunks = rag::split_text(&content, 500, 100);
+        if chunks.is_empty() {
+            return Err("切片后没有可入库的内容".to_string());
+        }
+        let doc_id = format!(
+            "{}_{}",
+            file_name
+                .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', ""),
+            chrono::Utc::now().timestamp()
+        );
+        let doc_meta = rag::DocumentMeta {
+            id: doc_id,
+            name: file_name,
+            size: file_size,
+            doc_type,
+            chunk_count: chunks.len(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            // status 只有在落盘成功后才写 ready —— 以前是先报 ready 再看结果
+            status: "ready".to_string(),
+        };
+        rag::save_document(&data_dir, &doc_meta, &chunks)?;
+        Ok(DocumentInfo {
+            id: doc_meta.id,
+            name: doc_meta.name,
+            size: doc_meta.size,
+            doc_type: doc_meta.doc_type,
+            chunk_count: doc_meta.chunk_count,
+            created_at: doc_meta.created_at,
+            status: doc_meta.status,
+        })
     })
+    .await
+    .map_err(|e| format!("入库任务被中断: {}", e))?
 }
 
 /// 列出所有文档
@@ -124,18 +149,15 @@ pub async fn ask_question(
 ) -> Result<AnswerResult, String> {
     let data_dir = get_data_dir(&app)?;
 
-    // 加载所有文档切片
-    let all_chunks = rag::load_all_chunks(&data_dir)?;
+    // BM25 检索（索引按目录指纹缓存，不再每次问答都把全部切片读一遍算裸词频）
+    let (top_chunks, corpus_size) = rag::search_corpus(&data_dir, &question, 5)?;
 
-    if all_chunks.is_empty() {
+    if corpus_size == 0 {
         return Ok(AnswerResult {
             answer: "知识库中没有文档，请先上传文档。".to_string(),
             citations: vec![],
         });
     }
-
-    // 关键词检索 - 找到最相关的切片
-    let top_chunks = rag::keyword_search(&question, &all_chunks, 5);
 
     if top_chunks.is_empty() {
         return Ok(AnswerResult {

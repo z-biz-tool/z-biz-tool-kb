@@ -197,21 +197,24 @@ function CitationsSection({ citations }: { citations: Citation[] }) {
 }
 
 // 单条消息
-function MessageItem({ msg, isTyping }: { msg: ChatMessage; isTyping: boolean }) {
+function MessageItem({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
 
   return (
     <>
       <div className="chat-message-wrap">
         <div className={isUser ? "chat-message-user" : "chat-message-assistant"}>
-          <div className="message-bubble" style={{
-            background: isUser ? cardBgGradient : "#fff",
-            borderRadius: 12,
-            padding: 12,
-            boxShadow: isUser ? "0 2px 8px rgba(102,126,234,0.1)" : "none",
-            border: isUser ? `1px solid rgba(102,126,234,0.2)` : "none",
-          }}>
-            {!isUser && !isTyping && (
+          <div
+            className={isUser ? "message-bubble" : "message-bubble message-enter"}
+            style={{
+              background: isUser ? cardBgGradient : "#fff",
+              borderRadius: 12,
+              padding: 12,
+              boxShadow: isUser ? "0 2px 8px rgba(102,126,234,0.1)" : "none",
+              border: isUser ? `1px solid rgba(102,126,234,0.2)` : "none",
+            }}
+          >
+            {!isUser && (
               <div style={{ marginBottom: 4, opacity: 0.6, display: "flex", alignItems: "center", gap: 4 }}>
                 <span style={{ 
                   fontSize: 12,
@@ -225,18 +228,13 @@ function MessageItem({ msg, isTyping }: { msg: ChatMessage; isTyping: boolean })
             )}
             {isUser ? (
               <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
-            ) : isTyping ? (
-              <div className="md-content">
-                {renderMarkdown(msg.content)}
-                <span className="typing-cursor" />
-              </div>
             ) : (
               renderMarkdown(msg.content)
             )}
           </div>
         </div>
       </div>
-      {!isUser && !isTyping && msg.citations && msg.citations.length > 0 && (
+      {!isUser && msg.citations && msg.citations.length > 0 && (
         <CitationsSection citations={msg.citations} />
       )}
     </>
@@ -251,94 +249,63 @@ export default function ChatPanel() {
   const retryLastQuestion = useKnowledgeStore((s) => s.retryLastQuestion);
   const clearMessages = useKnowledgeStore((s) => s.clearMessages);
   const documents = useKnowledgeStore((s) => s.documents);
+  const draft = useKnowledgeStore((s) => s.draft);
+  const setDraft = useKnowledgeStore((s) => s.setDraft);
 
-  const [input, setInput] = useState("");
-  const [typingMessageIdx, setTypingMessageIdx] = useState<number | null>(null);
-  const [displayedText, setDisplayedText] = useState("");
+  const inputRef = useRef<React.ComponentRef<typeof Input.TextArea>>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, displayedText, asking, askError]);
-
-  // 打字机效果：当新的 AI 消息到来时，逐字显示
-  useEffect(() => {
-    if (messages.length === 0) {
-      setTypingMessageIdx(null);
-      return;
-    }
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.role === "assistant" && lastMsg.content) {
-      // 只对新出现的最后一条 assistant 消息执行打字效果
-      setTypingMessageIdx(messages.length - 1);
-      setDisplayedText("");
-    }
-  }, [messages]);
-
-  // 逐字显示
-  useEffect(() => {
-    if (typingMessageIdx === null) return;
-    const targetMsg = messages[typingMessageIdx];
-    if (!targetMsg || targetMsg.role !== "assistant") return;
-
-    const fullText = targetMsg.content;
-    if (displayedText.length >= fullText.length) {
-      setTypingMessageIdx(null);
-      return;
-    }
-
-    typingTimerRef.current = setInterval(() => {
-      setDisplayedText((prev) => {
-        const next = fullText.slice(0, prev.length + 2);
-        if (next.length >= fullText.length) {
-          if (typingTimerRef.current) {
-            clearInterval(typingTimerRef.current);
-            typingTimerRef.current = null;
-          }
-          setTypingMessageIdx(null);
-        }
-        return next;
-      });
-    }, 20);
-
-    return () => {
-      if (typingTimerRef.current) {
-        clearInterval(typingTimerRef.current);
-        typingTimerRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [typingMessageIdx]);
+  }, [messages, asking, askError]);
 
   const handleSend = (text?: string) => {
-    const trimmed = (text ?? input).trim();
+    const trimmed = (text ?? draft).trim();
     if (!trimmed || asking) return;
-    setInput("");
+    setDraft("");
     askQuestion(trimmed);
   };
+
+  // 快捷键要拿到最新的 draft，故走 ref 而不是重新注册监听
+  const sendRef = useRef(handleSend);
+  useEffect(() => {
+    sendRef.current = handleSend;
+  });
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const inEditable =
+        !!target &&
+        (target.tagName === "TEXTAREA" ||
+          target.tagName === "INPUT" ||
+          target.isContentEditable);
+
+      if (e.key === "Escape") {
+        if (target?.tagName === "TEXTAREA") target.blur();
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      if (e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        inputRef.current?.focus();
+      } else if (e.key === "Enter" && !inEditable) {
+        // 输入框内的 Enter 由 onKeyDown 处理，这里再发一次会问两遍
+        e.preventDefault();
+        sendRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  };
-
-  // 正在打字的消息
-  const renderMessages = () => {
-    return messages.map((msg, i) => {
-      if (i === typingMessageIdx && typingMessageIdx !== null) {
-        // 显示打字中的版本
-        const typingMsg: ChatMessage = {
-          ...msg,
-          content: displayedText,
-        };
-        return <MessageItem key={i} msg={typingMsg} isTyping={true} />;
-      }
-      return <MessageItem key={i} msg={msg} isTyping={false} />;
-    });
   };
 
   return (
@@ -439,7 +406,7 @@ export default function ChatPanel() {
           </div>
         ) : (
           <>
-            {renderMessages()}
+            {messages.map((msg, i) => <MessageItem key={i} msg={msg} />)}
             {asking && (
               <div className="chat-message-wrap">
                 <div className="chat-message-assistant">
@@ -492,10 +459,11 @@ export default function ChatPanel() {
           alignItems: "stretch",
         }}>
           <Input.TextArea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+            placeholder="输入问题：Enter 发送，Shift+Enter 换行（⌘/Ctrl+K 聚焦，⌘/Ctrl+Enter 提问）"
             autoSize={{ minRows: 1, maxRows: 4 }}
             disabled={asking}
             style={{
@@ -519,7 +487,7 @@ export default function ChatPanel() {
             icon={<SendOutlined />}
             onClick={() => handleSend()}
             loading={asking}
-            disabled={!input.trim()}
+            disabled={!draft.trim()}
             shape="circle"
             size="large"
             style={{

@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Input, Button, Tag, Tooltip, Spin } from "antd";
+import { useState } from "react";
+import { Alert, Button, Input, Popconfirm, Spin, Tag, Tooltip, message } from "antd";
 import {
   FileTextOutlined,
   FilePdfOutlined,
@@ -9,7 +9,7 @@ import {
   ReloadOutlined,
   FileOutlined,
 } from "@ant-design/icons";
-import { useKnowledgeStore } from "../stores/knowledgeStore";
+import { useKnowledgeStore, toMessage } from "../stores/knowledgeStore";
 import type { DocumentInfo } from "../stores/knowledgeStore";
 import { EmptyState } from "../_shared";
 
@@ -80,6 +80,7 @@ export default function DocumentList() {
   const loadingDocs = useKnowledgeStore((s) => s.loadingDocs);
   const loadDocuments = useKnowledgeStore((s) => s.loadDocuments);
   const deleteDocument = useKnowledgeStore((s) => s.deleteDocument);
+  const docsError = useKnowledgeStore((s) => s.docsError);
 
   const [searchKeyword, setSearchKeyword] = useState("");
 
@@ -92,14 +93,11 @@ export default function DocumentList() {
   const handleDelete = async (doc: DocumentInfo) => {
     try {
       await deleteDocument(doc.id);
-    } catch {
-      // error logged in store
+      message.success(`已删除「${doc.name}」`);
+    } catch (e) {
+      message.error(`删除失败：${toMessage(e)}`);
     }
   };
-
-  useEffect(() => {
-    loadDocuments();
-  }, [loadDocuments]);
 
   return (
     <div className="doc-sidebar">
@@ -154,6 +152,21 @@ export default function DocumentList() {
           />
         </Tooltip>
       </div>
+
+      {docsError && !loadingDocs && (
+        <Alert
+          type="error"
+          showIcon
+          message="文档列表加载失败"
+          description={docsError}
+          action={
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => loadDocuments()}>
+              重试
+            </Button>
+          }
+          style={{ marginBottom: 10, borderRadius: 8 }}
+        />
+      )}
 
       {/* 搜索框 - 焦点阴影增强 */}
       <div className="doc-search" style={{ marginBottom: 10 }}>
@@ -242,29 +255,35 @@ export default function DocumentList() {
                     <span>{formatTime(doc.created_at)}</span>
                   </div>
                 </div>
-                <Tooltip title="删除">
-                  <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(doc);
-                    }}
-                    style={{
-                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
-                      (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(255,77,79,0.3)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.transform = "";
-                      (e.currentTarget as HTMLElement).style.boxShadow = "none";
-                    }}
-                  />
-                </Tooltip>
+                <Popconfirm
+                  title="删除这篇文档？"
+                  description={`「${doc.name}」及其 ${doc.chunk_count} 个切片索引会一并删除，无法恢复。`}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => handleDelete(doc)}
+                >
+                  <Tooltip title="删除">
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
+                        (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(255,77,79,0.3)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.transform = "";
+                        (e.currentTarget as HTMLElement).style.boxShadow = "none";
+                      }}
+                    />
+                  </Tooltip>
+                </Popconfirm>
               </div>
             );
           })

@@ -1,68 +1,85 @@
-import { useState } from "react";
-import { Button, Modal, Form, Input, message, Progress } from "antd";
-import { UploadOutlined, SettingOutlined } from "@ant-design/icons";
+import { useEffect, useState } from "react";
+import { Alert, Button, Modal, Form, Input, message, Spin, Tag, Tooltip } from "antd";
+import {
+  UploadOutlined,
+  SettingOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  LoadingOutlined,
+} from "@ant-design/icons";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useKnowledgeStore } from "../stores/knowledgeStore";
+import { useKnowledgeStore, toMessage } from "../stores/knowledgeStore";
 
 const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
 
-// 上传按钮组件（点击上传 + 进度显示 + 成功/失败反馈）
+type FileStatus = "pending" | "ok" | "failed";
+
+interface UploadTask {
+  name: string;
+  status: FileStatus;
+  error?: string;
+}
+
+function baseName(path: string): string {
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
+}
+
+const STATUS_ICON: Record<FileStatus, React.ReactNode> = {
+  pending: <LoadingOutlined spin />,
+  ok: <CheckCircleOutlined />,
+  failed: <CloseCircleOutlined />,
+};
+
+const STATUS_COLOR: Record<FileStatus, string> = {
+  pending: "processing",
+  ok: "success",
+  failed: "error",
+};
+
+// 上传按钮组件（多选 + 逐文件真实状态；后端无进度信号，故只显示在/不在）
 export default function UploadButton() {
   const uploadDocument = useKnowledgeStore((s) => s.uploadDocument);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [currentFile, setCurrentFile] = useState<string>("");
+  const [tasks, setTasks] = useState<UploadTask[]>([]);
+  const uploading = tasks.some((t) => t.status === "pending");
 
   const handleSelectFile = async () => {
     if (uploading) return;
+
+    let paths: string[] = [];
     try {
       const selected = await open({
-        multiple: false,
-        filters: [
-          {
-            name: "文档",
-            extensions: ["pdf", "doc", "docx", "txt", "md"],
-          },
-        ],
+        multiple: true,
+        filters: [{ name: "文档", extensions: ["pdf", "doc", "docx", "txt", "md"] }],
       });
-
-      if (selected && typeof selected === "string") {
-        const fileName = selected.split("/").pop() || selected.split("\\").pop() || "unknown";
-        setCurrentFile(fileName);
-        setUploading(true);
-        setUploadProgress(10);
-
-        // 模拟进度（invoke 为单次调用，无真实进度事件）
-        const timer = setInterval(() => {
-          setUploadProgress((p) => (p < 90 ? p + 5 : p));
-        }, 200);
-
-        try {
-          setUploadProgress(40);
-          await uploadDocument(selected, fileName);
-          clearInterval(timer);
-          setUploadProgress(100);
-          message.success(`${fileName} 上传成功`);
-          setTimeout(() => {
-            setUploading(false);
-            setUploadProgress(0);
-            setCurrentFile("");
-          }, 500);
-        } catch (e) {
-          clearInterval(timer);
-          setUploading(false);
-          setUploadProgress(0);
-          setCurrentFile("");
-          message.error(`上传失败：${e}`);
-        }
-      }
+      if (!selected) return;
+      paths = (Array.isArray(selected) ? selected : [selected]).filter(
+        (p): p is string => typeof p === "string" && p.length > 0
+      );
     } catch (e) {
-      setUploading(false);
-      setUploadProgress(0);
-      setCurrentFile("");
-      message.error(`选择文件失败：${e}`);
+      message.error(`选择文件失败：${toMessage(e)}`);
+      return;
     }
+    if (paths.length === 0) return;
+
+    const results: UploadTask[] = paths.map((p) => ({ name: baseName(p), status: "pending" }));
+    setTasks(results);
+
+    for (let i = 0; i < paths.length; i++) {
+      try {
+        await uploadDocument(paths[i], results[i].name);
+        results[i] = { ...results[i], status: "ok" };
+      } catch (e) {
+        // 提取失败的具体原因（扫描件/旧版 .doc 等）由后端给出，必须让用户看到
+        results[i] = { ...results[i], status: "failed", error: toMessage(e) };
+      }
+      setTasks([...results]);
+    }
+
+    const failed = results.filter((r) => r.status === "failed").length;
+    if (failed === 0) message.success(`${results.length} 篇已入库`);
+    else message.error(`${results.length - failed} 篇成功，${failed} 篇失败（原因见列表）`);
   };
 
   return (
@@ -103,36 +120,60 @@ export default function UploadButton() {
           (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 12px rgba(102,126,234,0.3)";
         }}
       >
-        {uploading ? "上传中..." : "上传文档"}
+        {uploading ? "解析中..." : "上传文档"}
       </Button>
       {uploading && (
-        <div style={{ marginTop: 10 }}>
-          {currentFile && (
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--ant-color-text-secondary)",
-                marginBottom: 6,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                fontWeight: 500,
-              }}
-              title={currentFile}
-            >
-              {currentFile}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginTop: 10,
+            fontSize: 11,
+            color: "var(--ant-color-text-secondary)",
+          }}
+        >
+          <Spin size="small" />
+          正在提取文本并切片入库，大文件会久一些
+        </div>
+      )}
+      {tasks.length > 0 && (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
+          {tasks.map((task, i) => (
+            <div key={`${task.name}-${i}`}>
+              <Tooltip title={task.status === "failed" ? task.error : task.name}>
+                <Tag
+                  icon={STATUS_ICON[task.status]}
+                  color={STATUS_COLOR[task.status]}
+                  style={{
+                    fontSize: 11,
+                    borderRadius: 4,
+                    display: "block",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    marginInlineEnd: 0,
+                  }}
+                >
+                  {task.name}
+                </Tag>
+              </Tooltip>
+              {task.status === "failed" && task.error && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    lineHeight: 1.5,
+                    color: "#ff4d4f",
+                    marginTop: 2,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {task.error}
+                </div>
+              )}
             </div>
-          )}
-          <Progress 
-            percent={uploadProgress} 
-            size="small" 
-            status="active"
-            strokeColor={{
-              '0%': '#667eea',
-              '100%': '#764ba2',
-            }}
-            style={{ borderRadius: 4 }}
-          />
+          ))}
         </div>
       )}
     </div>
@@ -146,18 +187,33 @@ export function LlmSettingsModal() {
   const setShowSettings = useKnowledgeStore((s) => s.setShowSettings);
   const llmConfig = useKnowledgeStore((s) => s.llmConfig);
   const setLlmConfig = useKnowledgeStore((s) => s.setLlmConfig);
+  const llmConfigError = useKnowledgeStore((s) => s.llmConfigError);
   const [saving, setSaving] = useState(false);
 
+  // antd 的 Esc 只在焦点落在弹层内时生效，这里无条件兜住
+  useEffect(() => {
+    if (!showSettings) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !saving) setShowSettings(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showSettings, saving, setShowSettings]);
+
   const handleSave = async () => {
+    // validateFields 失败时 antd 已在字段上标红，这里只关心真正的保存异常
+    const values = (await form.validateFields().catch(() => null)) as {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    } | null;
+    if (!values) return;
+    setSaving(true);
     try {
-      const values = await form.validateFields();
-      setSaving(true);
       await setLlmConfig(values.baseUrl, values.apiKey, values.model);
       message.success("配置已保存");
     } catch (e) {
-      if (e instanceof Error && e.message) {
-        message.error("保存失败：" + e.message);
-      }
+      message.error("保存失败：" + toMessage(e));
     } finally {
       setSaving(false);
     }
@@ -192,6 +248,15 @@ export function LlmSettingsModal() {
         padding: "20px",
       }}
     >
+      {llmConfigError && (
+        <Alert
+          type="error"
+          showIcon
+          message="读取现有配置失败"
+          description={llmConfigError}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Form
         form={form}
         layout="vertical"
