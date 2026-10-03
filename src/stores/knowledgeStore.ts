@@ -63,7 +63,9 @@ interface ChatSnapshot {
   draft: string;
 }
 
-function isChatMessage(m: unknown): m is ChatMessage {
+// 导出只为可测：这是 localStorage 脏数据的入口防线，形状错了就该被滤掉，
+// 而它此前是模块私有的 —— 整条防线一次都没被执行过。
+export function isChatMessage(m: unknown): m is ChatMessage {
   if (!m || typeof m !== "object") return false;
   const x = m as Record<string, unknown>;
   return (x.role === "user" || x.role === "assistant") && typeof x.content === "string";
@@ -71,7 +73,7 @@ function isChatMessage(m: unknown): m is ChatMessage {
 
 const EMPTY_SNAPSHOT: ChatSnapshot = { messages: [], draft: "" };
 
-function sanitizeChat(state: unknown): ChatSnapshot {
+export function sanitizeChat(state: unknown): ChatSnapshot {
   const s = (state ?? {}) as Partial<ChatSnapshot>;
   return {
     messages: Array.isArray(s.messages)
