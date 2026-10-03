@@ -38,12 +38,19 @@ export interface LlmConfig {
 
 // Tauri 的 invoke 抛出的是 Rust 侧的 String 错误，不是 Error 实例
 export function toMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
+  if (e instanceof Error) return e.message || "未知错误";
   if (typeof e === "string") return e;
   if (e && typeof e === "object" && "message" in e) {
-    return String((e as { message: unknown }).message);
+    // `{ message: undefined }` 里 message 键存在，`"message" in e` 为真，
+    // String(undefined) === "undefined"。把它当错误文案显示出去，
+    // 正是这个函数存在的意义所要防的那件事 —— 用户看到的是一句废话。
+    const m = String((e as { message: unknown }).message);
+    // 注意这里**直接返回**而不是落穿到下面的 String(e)：
+    // 落穿会得到 "[object Object]"，比 "undefined" 还难懂。
+    return m && m !== "undefined" && m !== "null" ? m : "未知错误";
   }
-  return String(e);
+  const s = String(e);
+  return s === "undefined" || s === "null" || s === "" ? "未知错误" : s;
 }
 
 const CHAT_STORAGE_KEY = "z-biz-tool-kb-chat";
