@@ -4,7 +4,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 /// LLM配置
@@ -40,12 +40,57 @@ pub struct Chunk {
 // 存储管理
 // ============================================================
 
+/// 把目录权限收紧到 0700。
+///
+/// 失败只提示不中断：数据目录可能落在用户没有权限改的父目录下
+/// （例如从别处整体拷过来的、或容器挂载卷），此时收紧失败但功能仍可用，
+/// 直接 Err 会让整个应用起不来 —— 那比权限偏宽更糟。
+#[cfg(unix)]
+fn harden_dir(dir: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = match fs::metadata(dir) {
+        Ok(m) => m,
+        Err(e) => return Err(format!("读取目录权限失败: {}", e)),
+    };
+    let mode = meta.permissions().mode() & 0o7777;
+    if mode & !0o700 != 0 {
+        if let Err(e) = fs::set_permissions(dir, fs::Permissions::from_mode(0o700)) {
+            eprintln!("[kb] 收紧数据目录权限失败（可继续使用）: {}", e);
+        }
+    }
+    Ok(())
+}
+
+/// 把文件权限收紧到 0600，用于已经存在的明文 key 配置文件。
+#[cfg(unix)]
+fn harden_file(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = fs::metadata(path) {
+        let mode = meta.permissions().mode() & 0o7777;
+        if mode & !0o600 != 0 {
+            if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
+                eprintln!("[kb] 收紧配置文件权限失败（可继续使用）: {}", e);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn harden_dir(_dir: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn harden_file(_path: &Path) {}
+
 /// 初始化存储目录
 pub fn init_storage(data_dir: &Path) -> Result<(), String> {
     let docs_dir = data_dir.join("documents");
     let chunks_dir = data_dir.join("chunks");
     fs::create_dir_all(&docs_dir).map_err(|e| format!("创建文档目录失败: {}", e))?;
     fs::create_dir_all(&chunks_dir).map_err(|e| format!("创建切片目录失败: {}", e))?;
+    // 这个目录里躺着明文 API key，目录本身就不该对同机其他账号可列
+    harden_dir(data_dir)?;
 
     // 如果没有配置文件，创建默认配置
     let config_path = data_dir.join("llm_config.json");
@@ -56,6 +101,9 @@ pub fn init_storage(data_dir: &Path) -> Result<(), String> {
             model: "gpt-4o-mini".to_string(),
         };
         save_llm_config(data_dir, &default_config)?;
+    } else {
+        // 旧版本落盘的文件是 0644，这里顺带收紧一次
+        harden_file(&config_path);
     }
 
     Ok(())
@@ -395,6 +443,44 @@ pub fn save_document(
     Ok(())
 }
 
+/// 文档 id 白名单。
+///
+/// 入库时（`commands.rs::upload_document`）id 是
+/// `file_name.replace(|c| !c.is_alphanumeric() && c != '-' && c != '_', "")`
+/// 再拼时间戳生成的，所以**合法 id 只会含 ASCII 字母数字、`-`、`_`**。
+/// 这层校验存在的理由：`doc_id` 是从前端 IPC 传进来的任意字符串，而删除路径是
+/// `data_dir/documents/{doc_id}.json`。不校验时 `../../../某处/x` 拼出来的是
+/// **数据目录之外**的路径，配上 `remove_file` 就是任意 `.json` 文件删除。
+fn validate_doc_id(doc_id: &str) -> Result<(), String> {
+    if doc_id.is_empty() {
+        return Err("文档 id 为空".to_string());
+    }
+    // 上限按入库生成的最长形态给（文件名 + `_` + 10 位秒级时间戳）留足余量
+    if doc_id.len() > 200 {
+        return Err(format!("文档 id 过长（{} 字符）", doc_id.len()));
+    }
+    if !doc_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("文档 id 含非法字符: {}", doc_id));
+    }
+    Ok(())
+}
+
+/// 取 `dir/{doc_id}.json` 的路径：**白名单 + 目录包含性**双闸。
+///
+/// 白名单已经排掉了分隔符，所以「canonicalize 之后的目录再 join 一个纯文件名」
+/// 在语义上不可能逃逸。这一层不是多余的：它是专门用来防「将来有人为了兼容
+/// 某个带空格的文件名而放宽白名单」的那种改动的 —— 那种改动单靠白名单就防不住了。
+fn doc_file_path(dir: &Path, doc_id: &str) -> Result<PathBuf, String> {
+    validate_doc_id(doc_id)?;
+    let base = dir
+        .canonicalize()
+        .map_err(|e| format!("目录不可用（{}）: {}", dir.display(), e))?;
+    Ok(base.join(format!("{}.json", doc_id)))
+}
+
 /// 列出所有文档元数据
 pub fn list_documents(data_dir: &Path) -> Result<Vec<DocumentMeta>, String> {
     let docs_dir = data_dir.join("documents");
@@ -405,16 +491,46 @@ pub fn list_documents(data_dir: &Path) -> Result<Vec<DocumentMeta>, String> {
     }
 
     let entries = fs::read_dir(&docs_dir).map_err(|e| format!("读取文档目录失败: {}", e))?;
+    // 单个条目读不出/JSON 损坏时**跳过这一份**，而不是让整条命令失败。
+    // 此前是 `?` 直接冒泡，于是任意一份元数据损坏 == 整个知识库不可用 ——
+    // 而用户能做的只有回去删文件重来，列表页直接空掉。
+    let mut skipped = 0usize;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("读取目录条目失败: {}", e))?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("[kb] 跳过无法读取的目录条目: {}", e);
+                skipped += 1;
+                continue;
+            }
+        };
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let content =
-                fs::read_to_string(&path).map_err(|e| format!("读取文档元数据失败: {}", e))?;
-            let meta: DocumentMeta = serde_json::from_str(&content)
-                .map_err(|e| format!("解析文档元数据失败: {}", e))?;
-            docs.push(meta);
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
         }
+        match fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<DocumentMeta>(&content) {
+                Ok(meta) => docs.push(meta),
+                Err(e) => {
+                    eprintln!(
+                        "[kb] 跳过损坏的元数据 {}: {}",
+                        path.display(),
+                        e
+                    );
+                    skipped += 1;
+                }
+            },
+            Err(e) => {
+                eprintln!("[kb] 跳过读不出的元数据 {}: {}", path.display(), e);
+                skipped += 1;
+            }
+        }
+    }
+    if skipped > 0 {
+        eprintln!(
+            "[kb] 共 {} 份文档元数据不可用，已跳过；其余文档仍可正常列出",
+            skipped
+        );
     }
 
     // 按创建时间降序排列
@@ -424,8 +540,15 @@ pub fn list_documents(data_dir: &Path) -> Result<Vec<DocumentMeta>, String> {
 
 /// 删除文档
 pub fn delete_document(data_dir: &Path, doc_id: &str) -> Result<(), String> {
-    let meta_path = data_dir.join("documents").join(format!("{}.json", doc_id));
-    let chunks_path = data_dir.join("chunks").join(format!("{}.json", doc_id));
+    // 2026-10-05 补：原先直接把前端传来的 doc_id 拼进路径就 remove_file，
+    // `../` 能逃出数据目录 —— 任意 `.json` 文件删除。
+    let meta_path = doc_file_path(&data_dir.join("documents"), doc_id)?;
+    let chunks_dir = data_dir.join("chunks");
+    let chunks_path = if chunks_dir.exists() {
+        doc_file_path(&chunks_dir, doc_id)?
+    } else {
+        chunks_dir.join(format!("{}.json", doc_id))
+    };
 
     if meta_path.exists() {
         fs::remove_file(&meta_path).map_err(|e| format!("删除文档元数据失败: {}", e))?;
@@ -447,16 +570,40 @@ pub fn load_all_chunks(data_dir: &Path) -> Result<Vec<Chunk>, String> {
     }
 
     let entries = fs::read_dir(&chunks_dir).map_err(|e| format!("读取切片目录失败: {}", e))?;
+    // 与 list_documents 同一条理由：一份切片文件坏掉不该让检索整体失效
+    let mut skipped = 0usize;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("读取目录条目失败: {}", e))?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("[kb] 跳过无法读取的切片条目: {}", e);
+                skipped += 1;
+                continue;
+            }
+        };
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            let content =
-                fs::read_to_string(&path).map_err(|e| format!("读取切片文件失败: {}", e))?;
-            let chunks: Vec<Chunk> = serde_json::from_str(&content)
-                .map_err(|e| format!("解析切片失败: {}", e))?;
-            all_chunks.extend(chunks);
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
         }
+        match fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<Vec<Chunk>>(&content) {
+                Ok(chunks) => all_chunks.extend(chunks),
+                Err(e) => {
+                    eprintln!("[kb] 跳过损坏的切片 {}: {}", path.display(), e);
+                    skipped += 1;
+                }
+            },
+            Err(e) => {
+                eprintln!("[kb] 跳过读不出的切片 {}: {}", path.display(), e);
+                skipped += 1;
+            }
+        }
+    }
+    if skipped > 0 {
+        eprintln!(
+            "[kb] 共 {} 份切片不可用，已跳过；其余文档仍可正常检索",
+            skipped
+        );
     }
 
     Ok(all_chunks)
@@ -806,14 +953,44 @@ pub fn load_llm_config(data_dir: &Path) -> Result<LlmConfig, String> {
 
     let content =
         fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
+    // 读的时候也收一次权限：老版本落盘的是 0644，而 init_storage 未必被走到
+    harden_file(&config_path);
     serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))
 }
 
 /// 保存LLM配置
+///
+/// 2026-10-05 补：文件里存的是**明文 API key**，而原先用 `fs::write` 落盘，
+/// 权限跟着 umask 走（本机实测 0644）—— 同机任何能读这个目录的进程都拿得到。
+/// 现在先写同目录临时文件并显式 0600，再 rename 到位：同文件系统内 rename 是
+/// 原子的，所以既不会出现「读到半截配置」，也不会留下一个带明文 key 的残留文件。
 pub fn save_llm_config(data_dir: &Path, config: &LlmConfig) -> Result<(), String> {
     let config_path = data_dir.join("llm_config.json");
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
-    fs::write(&config_path, json).map_err(|e| format!("保存配置失败: {}", e))?;
-    Ok(())
+
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp_path = config_path.with_extension("json.tmp");
+        {
+            let mut f = fs::File::create(&tmp_path)
+                .map_err(|e| format!("创建配置临时文件失败: {}", e))?;
+            f.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("设置配置权限失败: {}", e))?;
+            f.write_all(json.as_bytes())
+                .map_err(|e| format!("写入配置失败: {}", e))?;
+            f.sync_all().map_err(|e| format!("刷盘失败: {}", e))?;
+        }
+        fs::rename(&tmp_path, &config_path).map_err(|e| format!("保存配置失败: {}", e))?;
+        // rename 保留的是源文件权限，这里再钉一次，防止中间被别的路径改过
+        harden_file(&config_path);
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&config_path, json).map_err(|e| format!("保存配置失败: {}", e))?;
+        Ok(())
+    }
 }
