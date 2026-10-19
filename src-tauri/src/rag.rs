@@ -408,6 +408,66 @@ pub fn split_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
 // 文档存储操作
 // ============================================================
 
+/// 原子写：先写同目录临时文件并刷盘，再 `rename` 到位。
+///
+/// `fs::write` 是「创建 + 截断 + 写」三步连做。写到一半崩掉、或磁盘写满，
+/// 盘上留下的是**半截 JSON** —— 下次读回来就是坏文件。
+/// 同文件系统内 `rename` 是原子的：读者要么看到旧内容、要么看到新内容，
+/// 绝不会看到中间态。
+///
+/// **这个函数是全仓唯一的写文件实现。** 2026-10-19 之前不是：
+/// `save_llm_config` 自己写了一份（临时文件 + 0600 + `sync_all` + rename），
+/// 而 `save_document` 还在用裸 `fs::write` 写元数据与切片 ——
+/// 同一套规则写了两遍，**差的那一遍就是本函数要修的**。
+///
+/// ⚠️ 能力边界（别把它说得比实际强）：一次 `save_document` 要写**两个文件**，
+/// 两次 rename 各自原子，但**两次之间不是一个原子操作**。
+/// 中途崩溃的最坏结果是「元数据是新的、切片是旧的」，
+/// 而不是「某个文件是半截的」—— 后者才是会毁掉数据的那种。
+///
+/// `mode` 是落盘后的权限（unix）：`0o600` 给含密钥的文件，`0o644` 给普通文档。
+fn write_atomic(path: &Path, contents: &str, what: &str, mode: u32) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "data".to_string());
+    // 临时文件与目标**同目录**：跨文件系统的 rename 不是原子的
+    let tmp_path = path.with_file_name(format!("{}.tmp", file_name));
+
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let write = (|| -> std::io::Result<()> {
+            let mut f = fs::File::create(&tmp_path)?;
+            f.set_permissions(fs::Permissions::from_mode(mode))?;
+            f.write_all(contents.as_bytes())?;
+            f.sync_all()?;
+            Ok(())
+        })();
+        if let Err(e) = write {
+            // 失败时**不留残留临时文件** —— 否则盘上会多一个半截产物，
+            // 而 load_all_chunks 之类按扩展名扫目录的逻辑可能把它当正常文件读
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!("写入{}临时文件失败: {}", what, e));
+        }
+        if let Err(e) = fs::rename(&tmp_path, path) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!("保存{}失败: {}", what, e));
+        }
+        // rename 保留的是源文件权限；再钉一次，防止中间被别的路径改过
+        if mode == 0o600 {
+            harden_file(path);
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, contents).map_err(|e| format!("保存{}失败: {}", what, e))?;
+        Ok(())
+    }
+}
+
 /// 保存文档元数据和切片
 pub fn save_document(
     data_dir: &Path,
@@ -421,7 +481,7 @@ pub fn save_document(
     let meta_path = docs_dir.join(format!("{}.json", meta.id));
     let meta_json = serde_json::to_string_pretty(meta)
         .map_err(|e| format!("序列化文档元数据失败: {}", e))?;
-    fs::write(&meta_path, meta_json).map_err(|e| format!("保存文档元数据失败: {}", e))?;
+    write_atomic(&meta_path, &meta_json, "文档元数据", 0o644)?;
 
     // 保存切片
     let chunk_list: Vec<Chunk> = chunks
@@ -438,7 +498,7 @@ pub fn save_document(
     let chunks_path = chunks_dir.join(format!("{}.json", meta.id));
     let chunks_json = serde_json::to_string_pretty(&chunk_list)
         .map_err(|e| format!("序列化切片失败: {}", e))?;
-    fs::write(&chunks_path, chunks_json).map_err(|e| format!("保存切片失败: {}", e))?;
+    write_atomic(&chunks_path, &chunks_json, "文档切片", 0o644)?;
 
     Ok(())
 }
@@ -962,35 +1022,11 @@ pub fn load_llm_config(data_dir: &Path) -> Result<LlmConfig, String> {
 ///
 /// 2026-10-05 补：文件里存的是**明文 API key**，而原先用 `fs::write` 落盘，
 /// 权限跟着 umask 走（本机实测 0644）—— 同机任何能读这个目录的进程都拿得到。
-/// 现在先写同目录临时文件并显式 0600，再 rename 到位：同文件系统内 rename 是
-/// 原子的，所以既不会出现「读到半截配置」，也不会留下一个带明文 key 的残留文件。
+/// 现在走 `write_atomic`（临时文件 + 0600 + `sync_all` + rename）：
+/// 既不会出现「读到半截配置」，也不会留下一个带明文 key 的残留文件。
 pub fn save_llm_config(data_dir: &Path, config: &LlmConfig) -> Result<(), String> {
     let config_path = data_dir.join("llm_config.json");
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-        let tmp_path = config_path.with_extension("json.tmp");
-        {
-            let mut f = fs::File::create(&tmp_path)
-                .map_err(|e| format!("创建配置临时文件失败: {}", e))?;
-            f.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("设置配置权限失败: {}", e))?;
-            f.write_all(json.as_bytes())
-                .map_err(|e| format!("写入配置失败: {}", e))?;
-            f.sync_all().map_err(|e| format!("刷盘失败: {}", e))?;
-        }
-        fs::rename(&tmp_path, &config_path).map_err(|e| format!("保存配置失败: {}", e))?;
-        // rename 保留的是源文件权限，这里再钉一次，防止中间被别的路径改过
-        harden_file(&config_path);
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(&config_path, json).map_err(|e| format!("保存配置失败: {}", e))?;
-        Ok(())
-    }
+    write_atomic(&config_path, &json, "配置", 0o600)
 }
