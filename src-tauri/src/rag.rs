@@ -1030,3 +1030,55 @@ pub fn save_llm_config(data_dir: &Path, config: &LlmConfig) -> Result<(), String
         .map_err(|e| format!("序列化配置失败: {}", e))?;
     write_atomic(&config_path, &json, "配置", 0o600)
 }
+
+#[cfg(test)]
+mod minimax_live_tests {
+    use super::{call_llm, LlmConfig};
+
+    /// **真实 API 实测**：用真的 MiniMax 端点跑一遍本仓自己的 `call_llm`。
+    ///
+    /// 本仓的 RAG 检索是 BM25 + 关键词（**没有向量/embeddings**），
+    /// LLM 那一跳就是标准的 OpenAI 兼容 `/chat/completions` ⇒
+    /// MiniMax 填对 base_url 即生效。
+    /// 2026-10-20 实测 `https://api.minimaxi.com/v1/chat/completions` 返回 200。
+    ///
+    /// 跑法：`MINIMAX_API_KEY=<key> cargo test --lib minimax`
+    /// 没设 key 时**显式打印跳过原因**。
+    #[tokio::test]
+    async fn minimax_live_call_llm() {
+        let Ok(key) = std::env::var("MINIMAX_API_KEY") else {
+            eprintln!("[LIVE] 跳过 minimax 真实 API 实测：未设置 MINIMAX_API_KEY（这是「没跑」，不是「跑过了」）");
+            return;
+        };
+        let cfg = LlmConfig {
+            base_url: std::env::var("MINIMAX_BASE_URL")
+                .unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
+            api_key: key,
+            model: std::env::var("MINIMAX_MODEL")
+                .unwrap_or_else(|_| "MiniMax-M3.1-Flash".to_string()),
+        };
+        let out = call_llm(&cfg, "知识库里有「Z-Bot 是矩阵能力层」这一条", "只回两个字：收到")
+            .await
+            .expect("真实调用应成功");
+        assert!(!out.trim().is_empty(), "返回内容为空");
+        eprintln!("[LIVE] kb call_llm 真实调用成功：{}", &out.chars().take(40).collect::<String>());
+    }
+
+    /// 反向钉：假 key 必须被服务端拒。
+    #[tokio::test]
+    async fn minimax_live_rejects_bad_key() {
+        let Ok(_key) = std::env::var("MINIMAX_API_KEY") else {
+            eprintln!("[LIVE] 跳过（未设置 MINIMAX_API_KEY）");
+            return;
+        };
+        let cfg = LlmConfig {
+            base_url: "https://api.minimaxi.com/v1".to_string(),
+            api_key: "sk-cp-definitely-invalid-key".to_string(),
+            model: "MiniMax-M3.1-Flash".to_string(),
+        };
+        let err = call_llm(&cfg, "q", "c")
+            .await
+            .expect_err("假 key 必须被拒");
+        assert!(err.contains("401") || err.contains("403"), "期望 401/403，实际：{err}");
+    }
+}
