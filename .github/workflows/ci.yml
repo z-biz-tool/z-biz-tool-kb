@@ -76,7 +76,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       # runner 上新版 token 会写坏 rust-toolchain 生成的 cargo config（与 build.yml 同一条 workaround）
       - name: Reset broken cargo config
@@ -94,8 +94,17 @@ jobs:
         # 看不见 ⇒ 「没跑」看着跟「跑过了」一样。打开捕获后可核对。
         run: cargo test -- --nocapture
 
-      - name: Clippy (advisory)
-        # 先不加 `-D warnings`：这条门禁从没在本仓跑过，Linux 上的告警集本地量不到；
-        # 一上来就升级成失败只会得到一条没人能从本地开始查的红灯。跑出干净结果后再收严。
+      - name: Clippy
+        # 2026-10-21 收严：原来这条是「advisory」（不带 -D warnings），注释写着
+        # 「跑出干净结果后再收严」—— 本地实测 `cargo clippy --all-targets -- -D warnings`
+        # 已经是干净的（rc=0），所以按它自己写的计划收严。
+        # 收严之后它才是门禁：warning 不再是「跑过就算」而是「挡住」。
         working-directory: src-tauri
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Format
+        # 新增门禁：rustfmt 差异之前只在本机量得到（2026-10-21 实测本仓有 35 处差异），
+        # CI 完全不跑 ⇒ 谁改乱了格式没人知道，评审也只能靠肉眼。
+        # 格式债已在同一次提交里整仓清零（纯排版，测试全过）。
+        working-directory: src-tauri
+        run: cargo fmt --all --check

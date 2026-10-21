@@ -43,7 +43,8 @@ fn docx_取正文并按段落换行() {
 
 #[test]
 fn docx_解码实体并跳过属性里的尖括号() {
-    let xml = "<w:p><w:r w:rsidR=\"00A\"><w:t>a &lt; b &amp;&amp; c &#8220;q&#8221;</w:t></w:r></w:p>";
+    let xml =
+        "<w:p><w:r w:rsidR=\"00A\"><w:t>a &lt; b &amp;&amp; c &#8220;q&#8221;</w:t></w:r></w:p>";
     let path = write_temp("entity.docx", &zip_of(&[("word/document.xml", xml)]));
     let text = extract(&path, "word").unwrap();
     assert!(text.contains("a < b && c “q”"), "实体未解码: {text}");
@@ -52,7 +53,10 @@ fn docx_解码实体并跳过属性里的尖括号() {
 
 #[test]
 fn docx_缺正文条目要报错而不是静默空() {
-    let path = write_temp("empty.docx", &zip_of(&[("docProps/core.xml", "<cp:core/>")]));
+    let path = write_temp(
+        "empty.docx",
+        &zip_of(&[("docProps/core.xml", "<cp:core/>")]),
+    );
     let err = extract(&path, "word").unwrap_err();
     assert!(err.contains("document.xml") || err.contains("包"), "{err}");
 }
@@ -70,7 +74,10 @@ fn pptx_按幻灯片序号排_不按字典序() {
     let path = write_temp("a.pptx", &zip_of(&refs));
     let text = extract(&path, "ppt").unwrap();
     let at = |s: &str| text.find(s).unwrap();
-    assert!(at("SLIDE-1") < at("SLIDE-2") && at("SLIDE-2") < at("SLIDE-10"), "{text}");
+    assert!(
+        at("SLIDE-1") < at("SLIDE-2") && at("SLIDE-2") < at("SLIDE-10"),
+        "{text}"
+    );
     assert!(text.contains("[第 10 页]"), "页码前缀缺失: {text}");
 }
 
@@ -94,7 +101,10 @@ fn 旧版_doc_明确让用户转_docx() {
 
 #[test]
 fn 文本与markdown直读并剥字节序标记() {
-    let path = write_temp("bom.md", &[[0xef, 0xbb, 0xbf].as_slice(), "# 标题\n正文".as_bytes()].concat());
+    let path = write_temp(
+        "bom.md",
+        &[[0xef, 0xbb, 0xbf].as_slice(), "# 标题\n正文".as_bytes()].concat(),
+    );
     let text = extract(&path, "markdown").unwrap();
     assert_eq!(text, "# 标题\n正文");
 }
@@ -129,7 +139,10 @@ fn 真实_pdf_要么取出文字要么给出可读错误_绝不panic() {
         }
         Ok(Err(err)) => {
             assert!(err.contains("PDF"), "{err}");
-            assert!(err.contains("导出") || err.contains("OCR"), "错误没给出下一步: {err}");
+            assert!(
+                err.contains("导出") || err.contains("OCR"),
+                "错误没给出下一步: {err}"
+            );
         }
         Err(_) => panic!("提取真实 PDF 时 panic 了：入库线程会被一次上传打崩"),
     }

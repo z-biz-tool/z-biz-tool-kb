@@ -18,10 +18,7 @@ pub fn run() {
         ])
         .setup(|app| {
             // 初始化知识库存储目录
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("无法获取应用数据目录");
+            let app_data_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
             rag::init_storage(&app_data_dir).expect("初始化存储失败");
             Ok(())
         })

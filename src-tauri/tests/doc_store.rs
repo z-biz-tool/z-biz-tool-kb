@@ -21,12 +21,7 @@ use z_biz_tool_kb_lib::rag::{self, DocumentMeta, LlmConfig};
 fn temp_root(tag: &str) -> PathBuf {
     static SEQ: AtomicU32 = AtomicU32::new(0);
     let n = SEQ.fetch_add(1, Ordering::SeqCst);
-    let p = std::env::temp_dir().join(format!(
-        "kb-doc-store-{}-{}-{}",
-        tag,
-        std::process::id(),
-        n
-    ));
+    let p = std::env::temp_dir().join(format!("kb-doc-store-{}-{}-{}", tag, std::process::id(), n));
     let _ = fs::remove_dir_all(&p);
     fs::create_dir_all(p.join("documents")).expect("建 documents");
     fs::create_dir_all(p.join("chunks")).expect("建 chunks");
@@ -75,10 +70,10 @@ fn write_raw_chunks(root: &Path, id: &str, body: &str) {
 fn 删除文档时_带路径分隔符的_id_被拒() {
     let root = temp_root("traversal-sep");
     // 受害者：数据目录**外面**的一个真实 .json 文件
-    let victim = root.parent().unwrap().join(format!(
-        "kb-victim-{}.json",
-        std::process::id()
-    ));
+    let victim = root
+        .parent()
+        .unwrap()
+        .join(format!("kb-victim-{}.json", std::process::id()));
     fs::write(&victim, "{}").expect("造受害文件");
 
     let evil = format!(
@@ -91,15 +86,8 @@ fn 删除文档时_带路径分隔符的_id_被拒() {
             .trim_end_matches(".json")
     );
     let err = rag::delete_document(&root, &evil).expect_err("必须被拒");
-    assert!(
-        err.contains("非法字符"),
-        "应报非法字符，实际: {}",
-        err
-    );
-    assert!(
-        victim.exists(),
-        "数据目录外的文件被删了 —— 路径穿越没挡住"
-    );
+    assert!(err.contains("非法字符"), "应报非法字符，实际: {}", err);
+    assert!(victim.exists(), "数据目录外的文件被删了 —— 路径穿越没挡住");
     let _ = fs::remove_file(&victim);
     let _ = fs::remove_dir_all(&root);
 }
@@ -133,7 +121,10 @@ fn 删除文档时_合法的_id_照常删掉() {
     write_doc(&root, "readme_1700000000", "2026-01-01 00:00:00");
 
     rag::delete_document(&root, "readme_1700000000").expect("合法 id 应可删");
-    assert!(!root.join("documents").join("readme_1700000000.json").exists());
+    assert!(!root
+        .join("documents")
+        .join("readme_1700000000.json")
+        .exists());
     assert!(!root.join("chunks").join("readme_1700000000.json").exists());
     let _ = fs::remove_dir_all(&root);
 }
@@ -169,8 +160,7 @@ fn 一份切片损坏_检索数据照常加载() {
         }])
         .to_string(),
     );
-    fs::write(root.join("chunks").join("broken_2.json"), "not json at all")
-        .expect("造坏切片");
+    fs::write(root.join("chunks").join("broken_2.json"), "not json at all").expect("造坏切片");
 
     let chunks = rag::load_all_chunks(&root).expect("不该整条失败");
     assert_eq!(chunks.len(), 1, "应仍能取到那份好切片");
@@ -263,7 +253,10 @@ fn 保存文档后_没有残留临时文件() {
     rag::save_document(&root, &meta, &["正文".to_string()]).expect("保存文档");
 
     // 目标文件在
-    assert!(root.join("documents").join("atomic_1700000000.json").exists());
+    assert!(root
+        .join("documents")
+        .join("atomic_1700000000.json")
+        .exists());
     assert!(root.join("chunks").join("atomic_1700000000.json").exists());
 
     // 但**不该**留下任何 .tmp 残留：按扩展名扫目录的加载逻辑可能把它当正常文件读
@@ -273,7 +266,11 @@ fn 保存文档后_没有残留临时文件() {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| n.ends_with(".tmp"))
         .collect();
-    assert!(leftovers.is_empty(), "documents 下有临时文件残留: {:?}", leftovers);
+    assert!(
+        leftovers.is_empty(),
+        "documents 下有临时文件残留: {:?}",
+        leftovers
+    );
 
     let leftovers: Vec<String> = fs::read_dir(root.join("chunks"))
         .expect("读 chunks")
@@ -281,7 +278,11 @@ fn 保存文档后_没有残留临时文件() {
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| n.ends_with(".tmp"))
         .collect();
-    assert!(leftovers.is_empty(), "chunks 下有临时文件残留: {:?}", leftovers);
+    assert!(
+        leftovers.is_empty(),
+        "chunks 下有临时文件残留: {:?}",
+        leftovers
+    );
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -307,10 +308,10 @@ fn 反复保存同一文档_内容始终完整可解析() {
             &[format!("第 {} 片", i), format!("第 {} 片之二", i)],
         )
         .expect("保存文档");
-        let raw = fs::read_to_string(root.join("chunks").join("over_1700000000.json"))
-            .expect("读切片");
-        let parsed: Vec<serde_json::Value> =
-            serde_json::from_str(&raw).unwrap_or_else(|e| panic!("第 {} 次保存后切片不是合法 JSON: {} / {}", i, e, raw));
+        let raw =
+            fs::read_to_string(root.join("chunks").join("over_1700000000.json")).expect("读切片");
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("第 {} 次保存后切片不是合法 JSON: {} / {}", i, e, raw));
         assert_eq!(parsed.len(), 2, "第 {} 次保存后切片数不对", i);
     }
     let _ = fs::remove_dir_all(&root);
@@ -336,8 +337,8 @@ fn 保存文档失败时_不会留下半截的目标文件() {
         "写不进去时应当报错"
     );
     // 元数据那一步是成功的（documents 目录还在），但它必须是**完整**的
-    let raw = fs::read_to_string(root.join("documents").join("fail_1700000000.json"))
-        .expect("读元数据");
+    let raw =
+        fs::read_to_string(root.join("documents").join("fail_1700000000.json")).expect("读元数据");
     serde_json::from_str::<serde_json::Value>(&raw)
         .unwrap_or_else(|e| panic!("元数据不是合法 JSON（半截文件）: {} / {}", e, raw));
     let _ = fs::remove_dir_all(&root);
@@ -424,10 +425,8 @@ fn 源码里_不再有裸的_fs_write() {
     //
     // 判据：写文件一律走 `write_atomic`，源码里不该再出现裸的 `fs::write(`。
     // 这与本仓既有的做法同族（sys 仓用「0 处 remove_file」文本审计钉住启动项实现）。
-    let src = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rag.rs"),
-    )
-    .expect("读 rag.rs 源码");
+    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rag.rs"))
+        .expect("读 rag.rs 源码");
 
     // 例外只有一个：`write_atomic` 自己的 `#[cfg(not(unix))]` 回退分支
     // （非 unix 上没有 0600 语义，rename+权限那套也不适用）。

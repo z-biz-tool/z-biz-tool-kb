@@ -69,8 +69,7 @@ pub async fn upload_document(
         }
         let doc_id = format!(
             "{}_{}",
-            file_name
-                .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', ""),
+            file_name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', ""),
             chrono::Utc::now().timestamp()
         );
         let doc_meta = rag::DocumentMeta {
@@ -143,10 +142,7 @@ pub struct AnswerResult {
 
 /// 发起问答
 #[tauri::command]
-pub async fn ask_question(
-    app: AppHandle,
-    question: String,
-) -> Result<AnswerResult, String> {
+pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResult, String> {
     let data_dir = get_data_dir(&app)?;
 
     // BM25 检索（索引按目录指纹缓存，不再每次问答都把全部切片读一遍算裸词频）

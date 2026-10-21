@@ -148,7 +148,7 @@ pub fn read_file_content(path: &Path, doc_type: &str) -> Result<String, String> 
         "ppt" => extract_pptx(&bytes)?,
         "word_legacy" => {
             return Err(
-                "旧版 .doc（OLE 二进制）读不了，请在 Word 里另存为 .docx 再上传".to_string()
+                "旧版 .doc（OLE 二进制）读不了，请在 Word 里另存为 .docx 再上传".to_string(),
             )
         }
         // 认不得的类型一律拒绝：以前这里退回"抠可打印字符"，
@@ -479,8 +479,8 @@ pub fn save_document(
 
     // 保存元数据
     let meta_path = docs_dir.join(format!("{}.json", meta.id));
-    let meta_json = serde_json::to_string_pretty(meta)
-        .map_err(|e| format!("序列化文档元数据失败: {}", e))?;
+    let meta_json =
+        serde_json::to_string_pretty(meta).map_err(|e| format!("序列化文档元数据失败: {}", e))?;
     write_atomic(&meta_path, &meta_json, "文档元数据", 0o644)?;
 
     // 保存切片
@@ -496,8 +496,8 @@ pub fn save_document(
         .collect();
 
     let chunks_path = chunks_dir.join(format!("{}.json", meta.id));
-    let chunks_json = serde_json::to_string_pretty(&chunk_list)
-        .map_err(|e| format!("序列化切片失败: {}", e))?;
+    let chunks_json =
+        serde_json::to_string_pretty(&chunk_list).map_err(|e| format!("序列化切片失败: {}", e))?;
     write_atomic(&chunks_path, &chunks_json, "文档切片", 0o644)?;
 
     Ok(())
@@ -572,11 +572,7 @@ pub fn list_documents(data_dir: &Path) -> Result<Vec<DocumentMeta>, String> {
             Ok(content) => match serde_json::from_str::<DocumentMeta>(&content) {
                 Ok(meta) => docs.push(meta),
                 Err(e) => {
-                    eprintln!(
-                        "[kb] 跳过损坏的元数据 {}: {}",
-                        path.display(),
-                        e
-                    );
+                    eprintln!("[kb] 跳过损坏的元数据 {}: {}", path.display(), e);
                     skipped += 1;
                 }
             },
@@ -832,8 +828,7 @@ fn chunks_fingerprint(chunks_dir: &Path) -> Result<u64, String> {
     let mut hasher = DefaultHasher::new();
     if chunks_dir.exists() {
         let mut facts: Vec<String> = Vec::new();
-        let entries =
-            fs::read_dir(chunks_dir).map_err(|e| format!("读取切片目录失败: {}", e))?;
+        let entries = fs::read_dir(chunks_dir).map_err(|e| format!("读取切片目录失败: {}", e))?;
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
@@ -890,14 +885,16 @@ pub fn search_corpus(
     let cached = guard
         .as_ref()
         .ok_or_else(|| "检索索引尚未建立".to_string())?;
-    Ok((cached.index.search(question, top_n), cached.index.chunks.len()))
+    Ok((
+        cached.index.search(question, top_n),
+        cached.index.chunks.len(),
+    ))
 }
 
 /// 直接对给定切片集合检索（测试与一次性调用用，不带缓存）
 pub fn bm25_search(question: &str, chunks: &[Chunk], top_n: usize) -> Vec<(Chunk, f64)> {
     ChunkIndex::build(chunks).search(question, top_n)
 }
-
 
 // ============================================================
 // LLM API调用
@@ -1011,8 +1008,7 @@ pub fn load_llm_config(data_dir: &Path) -> Result<LlmConfig, String> {
         });
     }
 
-    let content =
-        fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
+    let content = fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
     // 读的时候也收一次权限：老版本落盘的是 0644，而 init_storage 未必被走到
     harden_file(&config_path);
     serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))
@@ -1026,8 +1022,8 @@ pub fn load_llm_config(data_dir: &Path) -> Result<LlmConfig, String> {
 /// 既不会出现「读到半截配置」，也不会留下一个带明文 key 的残留文件。
 pub fn save_llm_config(data_dir: &Path, config: &LlmConfig) -> Result<(), String> {
     let config_path = data_dir.join("llm_config.json");
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("序列化配置失败: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
     write_atomic(&config_path, &json, "配置", 0o600)
 }
 
@@ -1057,11 +1053,18 @@ mod minimax_live_tests {
             model: std::env::var("MINIMAX_MODEL")
                 .unwrap_or_else(|_| "MiniMax-M3.1-Flash".to_string()),
         };
-        let out = call_llm(&cfg, "知识库里有「Z-Bot 是矩阵能力层」这一条", "只回两个字：收到")
-            .await
-            .expect("真实调用应成功");
+        let out = call_llm(
+            &cfg,
+            "知识库里有「Z-Bot 是矩阵能力层」这一条",
+            "只回两个字：收到",
+        )
+        .await
+        .expect("真实调用应成功");
         assert!(!out.trim().is_empty(), "返回内容为空");
-        eprintln!("[LIVE] kb call_llm 真实调用成功：{}", out.chars().take(40).collect::<String>());
+        eprintln!(
+            "[LIVE] kb call_llm 真实调用成功：{}",
+            out.chars().take(40).collect::<String>()
+        );
     }
 
     /// 反向钉：假 key 必须被服务端拒。
@@ -1076,9 +1079,10 @@ mod minimax_live_tests {
             api_key: "sk-cp-definitely-invalid-key".to_string(),
             model: "MiniMax-M3.1-Flash".to_string(),
         };
-        let err = call_llm(&cfg, "q", "c")
-            .await
-            .expect_err("假 key 必须被拒");
-        assert!(err.contains("401") || err.contains("403"), "期望 401/403，实际：{err}");
+        let err = call_llm(&cfg, "q", "c").await.expect_err("假 key 必须被拒");
+        assert!(
+            err.contains("401") || err.contains("403"),
+            "期望 401/403，实际：{err}"
+        );
     }
 }

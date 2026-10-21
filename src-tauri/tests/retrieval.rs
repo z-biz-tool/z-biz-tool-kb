@@ -23,9 +23,21 @@ fn top_docs(results: &[(Chunk, f64)]) -> Vec<&str> {
 fn 稀有词压过每篇都有的泛词() {
     // 「安装」三篇都有（泛词），只有 doc-b 提到 aTrust —— 问 aTrust 时 b 必须第一
     let chunks = vec![
-        chunk("doc-a", 0, "安装步骤说明，安装前请关闭防火墙，安装过程约五分钟"),
-        chunk("doc-b", 1, "aTrust 的安装证书位于配置目录，首次启动 aTrust 需要管理员授权"),
-        chunk("doc-c", 2, "安装完成后安装日志在临时目录，反复安装会留下多个安装记录"),
+        chunk(
+            "doc-a",
+            0,
+            "安装步骤说明，安装前请关闭防火墙，安装过程约五分钟",
+        ),
+        chunk(
+            "doc-b",
+            1,
+            "aTrust 的安装证书位于配置目录，首次启动 aTrust 需要管理员授权",
+        ),
+        chunk(
+            "doc-c",
+            2,
+            "安装完成后安装日志在临时目录，反复安装会留下多个安装记录",
+        ),
     ];
     let hits = rag::bm25_search("aTrust 怎么安装", &chunks, 3);
     assert!(!hits.is_empty(), "有明确命中时不该返回空");
@@ -35,7 +47,10 @@ fn 稀有词压过每篇都有的泛词() {
         .iter()
         .filter(|(c, _)| c.doc_id != "doc-b")
         .fold(0.0f64, |a, (_, s)| a.max(*s));
-    assert!(b > others, "稀有词没有把相关切片顶上去: b={b} others={others}");
+    assert!(
+        b > others,
+        "稀有词没有把相关切片顶上去: b={b} others={others}"
+    );
 }
 
 #[test]
@@ -70,7 +85,10 @@ fn 跨标点的垃圾_gram_不产生() {
     assert!(!terms.contains(&"装a".to_string()), "{terms:?}");
     assert!(!terms.contains(&"t之".to_string()), "{terms:?}");
     assert!(terms.contains(&"安装".to_string()));
-    assert!(terms.contains(&"atrust".to_string()), "大写词没被归一: {terms:?}");
+    assert!(
+        terms.contains(&"atrust".to_string()),
+        "大写词没被归一: {terms:?}"
+    );
     assert!(terms.contains(&"之后".to_string()));
 }
 
@@ -127,7 +145,11 @@ fn 磁盘知识库检索会随上传删除而失效重建() {
     put("proxy", "代理配置说明");
     let (hits, size) = rag::search_corpus(&dir, "根证书怎么导出", 5).unwrap();
     assert_eq!(size, 2, "新增文档后缓存没失效");
-    assert_eq!(top_docs(&hits), vec!["root"], "加了无关文档后正确的那篇仍该第一");
+    assert_eq!(
+        top_docs(&hits),
+        vec!["root"],
+        "加了无关文档后正确的那篇仍该第一"
+    );
 
     rag::delete_document(&dir, "root").unwrap();
     let (hits, size) = rag::search_corpus(&dir, "根证书怎么导出", 5).unwrap();
@@ -154,6 +176,11 @@ fn 长文档里靠后的切片也能被检索到() {
     };
     rag::save_document(&dir, &m, &texts).unwrap();
     let (hits, _) = rag::search_corpus(&dir, "9443 端口", 5).unwrap();
-    assert_eq!(hits[0].0.index, 19, "命中了错误的切片: {:?}", top_docs(&hits));
+    assert_eq!(
+        hits[0].0.index,
+        19,
+        "命中了错误的切片: {:?}",
+        top_docs(&hits)
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
