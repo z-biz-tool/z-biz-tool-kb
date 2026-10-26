@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button, Tooltip, ConfigProvider } from "antd";
 import {
   SettingOutlined,
@@ -38,6 +38,12 @@ export default function App() {
   const setShowSettings = useKnowledgeStore((s) => s.setShowSettings);
   const [collapsed, setCollapsed] = useState(() => readPrefs().sidebarCollapsed);
 
+  const openSettings = useCallback(() => {
+    // 每次打开都重读一次，避免展示启动时的旧配置
+    void loadLlmConfig();
+    setShowSettings(true);
+  }, [loadLlmConfig, setShowSettings]);
+
   useEffect(() => {
     loadDocuments();
     loadLlmConfig();
@@ -57,18 +63,20 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
+      // 弹层打开时全局快捷键不抢焦点
+      if (document.querySelector('[role="dialog"]')) return;
       const k = e.key.toLowerCase();
       if (k === "b") {
         e.preventDefault();
         setCollapsed((c) => !c);
       } else if (k === ",") {
         e.preventDefault();
-        setShowSettings(true);
+        openSettings();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setShowSettings]);
+  }, [openSettings]);
 
   const headerExtra = (
     <>
@@ -76,11 +84,17 @@ export default function App() {
         <Button
           type="text"
           icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+          aria-label={collapsed ? "展开文档库" : "收起文档库"}
           onClick={() => setCollapsed((c) => !c)}
         />
       </Tooltip>
       <Tooltip title="LLM 配置（⌘/Ctrl+,）">
-        <Button type="text" icon={<SettingOutlined />} onClick={() => setShowSettings(true)} />
+        <Button
+          type="text"
+          icon={<SettingOutlined />}
+          aria-label="打开 LLM 配置"
+          onClick={openSettings}
+        />
       </Tooltip>
     </>
   );

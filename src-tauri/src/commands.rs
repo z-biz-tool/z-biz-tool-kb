@@ -123,6 +123,21 @@ pub fn delete_document(app: AppHandle, doc_id: String) -> Result<(), String> {
     rag::delete_document(&data_dir, &doc_id)
 }
 
+/// 读取文档详情（只读）：元数据 + 前 N 个切片预览。
+///
+/// doc_id 的校验完全复用 rag 里的白名单 + 目录包含性双闸，
+/// 这里不另写一套 —— 同一规则写两遍必然漂移。
+#[tauri::command]
+pub fn get_document_detail(app: AppHandle, doc_id: String) -> Result<rag::DocumentDetail, String> {
+    let data_dir = get_data_dir(&app)?;
+    rag::load_document_detail(
+        &data_dir,
+        &doc_id,
+        rag::DETAIL_CHUNK_LIMIT,
+        rag::DETAIL_CHUNK_MAX_CHARS,
+    )
+}
+
 /// 问答引用溯源
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Citation {
@@ -146,7 +161,7 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResu
     let data_dir = get_data_dir(&app)?;
 
     // BM25 检索（索引按目录指纹缓存，不再每次问答都把全部切片读一遍算裸词频）
-    let (top_chunks, corpus_size) = rag::search_corpus(&data_dir, &question, 5)?;
+    let (mut top_chunks, corpus_size) = rag::search_corpus(&data_dir, &question, 5)?;
 
     if corpus_size == 0 {
         return Ok(AnswerResult {
@@ -161,6 +176,10 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResu
             citations: vec![],
         });
     }
+
+    // BM25 原始分没有上界，直接乘 100 当百分比是假数值；
+    // 归一化后只表达「相对本次最高分」的比例。
+    rag::normalize_scores(&mut top_chunks);
 
     // 构建引用信息（保留完整切片文本，由前端展开查看）
     let citations: Vec<Citation> = top_chunks

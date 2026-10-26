@@ -1,5 +1,17 @@
-import { useState } from "react";
-import { Alert, Button, Input, Popconfirm, Spin, Tag, Tooltip, message } from "antd";
+import { useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Button,
+  Descriptions,
+  Drawer,
+  Input,
+  Popconfirm,
+  Spin,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from "antd";
 import {
   FileTextOutlined,
   FilePdfOutlined,
@@ -10,11 +22,19 @@ import {
   FileOutlined,
 } from "@ant-design/icons";
 import { useKnowledgeStore, toMessage } from "../stores/knowledgeStore";
-import type { DocumentInfo } from "../stores/knowledgeStore";
+import type { DocumentDetail, DocumentInfo } from "../stores/knowledgeStore";
 import { EmptyState } from "../_shared";
+import {
+  detailTruncationNote,
+  formatSize,
+  formatTime,
+  getStatusInfo,
+} from "../lib/docView";
 
 const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
+
+const { Text } = Typography;
 
 // 文档类型图标
 function getDocIcon(docType: string) {
@@ -33,71 +53,100 @@ function getDocIcon(docType: string) {
   }
 }
 
-// 格式化文件大小
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// 格式化时间
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d
-      .getHours()
-      .toString()
-      .padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-  } catch {
-    return "";
-  }
-}
-
-// 状态信息
-function getStatusInfo(status: string): {
-  label: string;
-  className: string;
-} {
-  switch (status?.toLowerCase()) {
-    case "ready":
-    case "ok":
-    case "done":
-      return { label: "就绪", className: "ready" };
-    case "processing":
-    case "pending":
-    case "loading":
-      return { label: "处理中", className: "processing" };
-    case "failed":
-    case "error":
-      return { label: "失败", className: "failed" };
-    default:
-      return { label: "就绪", className: "ready" };
-  }
-}
-
 export default function DocumentList() {
   const documents = useKnowledgeStore((s) => s.documents);
   const loadingDocs = useKnowledgeStore((s) => s.loadingDocs);
   const loadDocuments = useKnowledgeStore((s) => s.loadDocuments);
+  const getDocumentDetail = useKnowledgeStore((s) => s.getDocumentDetail);
   const deleteDocument = useKnowledgeStore((s) => s.deleteDocument);
   const docsError = useKnowledgeStore((s) => s.docsError);
 
   const [searchKeyword, setSearchKeyword] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const deletingRef = useRef<string | null>(null);
+
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailDoc, setDetailDoc] = useState<DocumentInfo | null>(null);
+  const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  // 请求序号：快速点开另一篇或关闭抽屉后，旧请求的结果必须丢掉
+  const detailReqRef = useRef(0);
+  // 关闭抽屉后把焦点还给触发它的卡片，键盘用户不会掉到 body
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
 
   // 过滤文档
   const filteredDocs = documents.filter((doc) =>
     doc.name.toLowerCase().includes(searchKeyword.toLowerCase())
   );
 
+  const openDetail = async (doc: DocumentInfo) => {
+    const req = ++detailReqRef.current;
+    if (document.activeElement instanceof HTMLElement) {
+      detailTriggerRef.current = document.activeElement;
+    }
+    setDetailDoc(doc);
+    setDetailOpen(true);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    try {
+      const result = await getDocumentDetail(doc.id);
+      if (req !== detailReqRef.current) return;
+      setDetail(result);
+    } catch (e) {
+      if (req !== detailReqRef.current) return;
+      setDetailError(toMessage(e));
+    } finally {
+      if (req === detailReqRef.current) setDetailLoading(false);
+    }
+  };
+
+  const closeDetail = () => {
+    // 让在途请求的结果失效，避免关闭后回写已关闭的视图
+    detailReqRef.current += 1;
+    setDetailOpen(false);
+    setDetailLoading(false);
+  };
+
+  // afterOpenChange 在无动画环境下不会触发，这里兜底：只有焦点丢了才还给卡片
+  useEffect(() => {
+    if (detailOpen) return;
+    const trigger = detailTriggerRef.current;
+    if (!trigger || !document.contains(trigger)) return;
+    const timer = window.setTimeout(() => {
+      const active = document.activeElement;
+      const lostFocus =
+        !active ||
+        active === document.body ||
+        (active instanceof Element && active.closest(".ant-drawer") !== null);
+      if (lostFocus && document.contains(trigger)) trigger.focus();
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [detailOpen]);
+
   // 删除文档
   const handleDelete = async (doc: DocumentInfo) => {
+    if (deletingRef.current) return;
+    deletingRef.current = doc.id;
+    setDeletingId(doc.id);
     try {
       await deleteDocument(doc.id);
       message.success(`已删除「${doc.name}」`);
+      if (detailDoc?.id === doc.id) closeDetail();
     } catch (e) {
-      message.error(`删除失败：${toMessage(e)}`);
+      message.error(`删除「${doc.name}」失败：${toMessage(e)}`);
+    } finally {
+      deletingRef.current = null;
+      setDeletingId(null);
     }
   };
+
+  const detailMeta = detail?.meta ?? detailDoc;
+  const detailStatus = detailMeta ? getStatusInfo(detailMeta.status) : null;
+  const truncationNote = detail
+    ? detailTruncationNote(detail.chunks.length, detail.total_chunks)
+    : null;
 
   return (
     <div className="doc-sidebar">
@@ -137,6 +186,8 @@ export default function DocumentList() {
             type="text"
             size="small"
             icon={<ReloadOutlined />}
+            loading={loadingDocs}
+            aria-label="刷新文档列表"
             onClick={() => loadDocuments()}
             style={{
               transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -157,7 +208,7 @@ export default function DocumentList() {
         <Alert
           type="error"
           showIcon
-          message="文档列表加载失败"
+          title="文档列表加载失败"
           description={docsError}
           action={
             <Button size="small" icon={<ReloadOutlined />} onClick={() => loadDocuments()}>
@@ -173,9 +224,16 @@ export default function DocumentList() {
         <Input
           prefix={<SearchOutlined style={{ color: "#bfbfbf" }} />}
           placeholder="搜索文档..."
+          aria-label="搜索文档"
           value={searchKeyword}
           onChange={(e) => setSearchKeyword(e.target.value)}
-          allowClear
+          allowClear={{
+            clearIcon: (
+              <span role="img" aria-label="清空搜索">
+                ×
+              </span>
+            ),
+          }}
           size="middle"
           style={{
             borderRadius: 8,
@@ -206,6 +264,13 @@ export default function DocumentList() {
               title={searchKeyword ? "未找到匹配的文档" : "暂无文档"}
               description={searchKeyword ? "试试其他关键词" : "上传开始构建知识库"}
             />
+            {searchKeyword && (
+              <div style={{ textAlign: "center", marginTop: 12 }}>
+                <Button size="small" onClick={() => setSearchKeyword("")}>
+                  清空搜索
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           filteredDocs.map((doc, index) => {
@@ -222,6 +287,18 @@ export default function DocumentList() {
                 cursor: "pointer",
                 transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
                 border: `1px solid rgba(102,126,234,${index % 2 === 0 ? 0.08 : 0.12})`,
+              }}
+              role="button"
+              tabIndex={0}
+              aria-label={`查看「${doc.name}」详情`}
+              onClick={() => openDetail(doc)}
+              onKeyDown={(e) => {
+                // 删除按钮等内部元素收到 Enter 时不该顺带打开详情
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  void openDetail(doc);
+                }
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(102,126,234,0.15)";
@@ -261,14 +338,19 @@ export default function DocumentList() {
                   okText="删除"
                   cancelText="取消"
                   okButtonProps={{ danger: true }}
+                  cancelButtonProps={{ autoFocus: true }}
+                  disabled={deletingId !== null}
                   onConfirm={() => handleDelete(doc)}
                 >
-                  <Tooltip title="删除">
+                  <Tooltip title={deletingId === doc.id ? "正在删除" : "删除"}>
                     <Button
                       type="text"
                       size="small"
                       danger
                       icon={<DeleteOutlined />}
+                      loading={deletingId === doc.id}
+                      disabled={deletingId !== null && deletingId !== doc.id}
+                      aria-label={`删除「${doc.name}」`}
                       onClick={(e) => e.stopPropagation()}
                       style={{
                         transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -289,6 +371,114 @@ export default function DocumentList() {
           })
         )}
       </div>
+
+      <Drawer
+        title={detailMeta ? `「${detailMeta.name}」` : "文档详情"}
+        open={detailOpen}
+        onClose={closeDetail}
+        afterOpenChange={(open) => {
+          if (!open) detailTriggerRef.current?.focus();
+        }}
+        size={520}
+        destroyOnHidden
+        styles={{ body: { padding: 16 } }}
+        extra={
+          detailStatus ? (
+            <Tag color={detailStatus.className === "failed" ? "error" : "blue"}>
+              {detailStatus.label}
+            </Tag>
+          ) : null
+        }
+      >
+        {detailLoading ? (
+          <div style={{ textAlign: "center", padding: "48px 0" }}>
+            <Spin description="读取文档详情..." />
+          </div>
+        ) : detailError ? (
+          <Alert
+            type="error"
+            showIcon
+            title="文档详情加载失败"
+            description={detailError}
+            action={
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={() => detailDoc && openDetail(detailDoc)}
+              >
+                重试
+              </Button>
+            }
+          />
+        ) : detail && detailMeta ? (
+          <>
+            <Descriptions
+              size="small"
+              column={2}
+              items={[
+                { key: "type", label: "类型", children: detailMeta.doc_type || "—" },
+                { key: "size", label: "大小", children: formatSize(detailMeta.size) },
+                { key: "chunks", label: "切片", children: `${detail.total_chunks} 个` },
+                { key: "created", label: "入库时间", children: formatTime(detailMeta.created_at) },
+              ]}
+            />
+
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              margin: "20px 0 8px",
+            }}>
+              <Text strong>内容预览</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                共 {detail.total_chunks} 个切片
+              </Text>
+            </div>
+
+            {truncationNote && (
+              <Alert
+                type="info"
+                showIcon
+                title={truncationNote}
+                style={{ marginBottom: 10 }}
+              />
+            )}
+
+            {detail.chunks.length === 0 ? (
+              <EmptyState
+                icon={<FileTextOutlined style={{ fontSize: 40, color: "#bfbfbf" }} />}
+                title="没有可预览的切片"
+                description="这份文档尚未切出入库内容"
+              />
+            ) : (
+              detail.chunks.map((chunk) => (
+                <div
+                  key={chunk.index}
+                  style={{
+                    background: cardBgGradient,
+                    border: "1px solid rgba(102,126,234,0.15)",
+                    borderRadius: 8,
+                    padding: 10,
+                    marginBottom: 8,
+                  }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <Tag color="blue" style={{ fontSize: 10, margin: 0 }}>
+                      #{chunk.index}
+                    </Tag>
+                    <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>
+                      {chunk.text.length} 字
+                    </Text>
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {chunk.text}
+                  </div>
+                </div>
+              ))
+            )}
+          </>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

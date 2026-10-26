@@ -189,6 +189,7 @@ export function LlmSettingsModal() {
   const setLlmConfig = useKnowledgeStore((s) => s.setLlmConfig);
   const llmConfigError = useKnowledgeStore((s) => s.llmConfigError);
   const [saving, setSaving] = useState(false);
+  type LlmFormValues = { baseUrl: string; apiKey: string; model: string };
 
   // antd 的 Esc 只在焦点落在弹层内时生效，这里无条件兜住
   useEffect(() => {
@@ -202,12 +203,13 @@ export function LlmSettingsModal() {
 
   const handleSave = async () => {
     // validateFields 失败时 antd 已在字段上标红，这里只关心真正的保存异常
-    const values = (await form.validateFields().catch(() => null)) as {
-      baseUrl: string;
-      apiKey: string;
-      model: string;
-    } | null;
+    const values = (await form.validateFields().catch(() => null)) as LlmFormValues | null;
     if (!values) return;
+    await saveValues(values);
+  };
+
+  const saveValues = async (values: LlmFormValues) => {
+    if (saving) return;
     setSaving(true);
     try {
       await setLlmConfig(values.baseUrl, values.apiKey, values.model);
@@ -240,19 +242,24 @@ export function LlmSettingsModal() {
       confirmLoading={saving}
       okText="保存"
       cancelText="取消"
+      destroyOnHidden
+      closable={!saving}
+      keyboard={!saving}
+      mask={{ closable: !saving }}
+      cancelButtonProps={{ disabled: saving }}
       style={{
         borderRadius: 12,
         overflow: "hidden",
       }}
-      bodyStyle={{
-        padding: "20px",
+      styles={{
+        body: { padding: "20px" },
       }}
     >
       {llmConfigError && (
         <Alert
           type="error"
           showIcon
-          message="读取现有配置失败"
+          title="读取现有配置失败"
           description={llmConfigError}
           style={{ marginBottom: 16 }}
         />
@@ -260,6 +267,7 @@ export function LlmSettingsModal() {
       <Form
         form={form}
         layout="vertical"
+        onFinish={saveValues}
         initialValues={{
           baseUrl: llmConfig?.base_url || "https://api.openai.com/v1",
           apiKey: llmConfig?.api_key || "",

@@ -34,7 +34,7 @@ module.registerHooks({
   },
 });
 
-const { isChatMessage, sanitizeChat } = await import("../src/stores/knowledgeStore.ts");
+const { isChatMessage, isCitation, sanitizeChat } = await import("../src/stores/knowledgeStore.ts");
 
 const msg = (role: string, content: string) => ({ role, content });
 
@@ -131,4 +131,76 @@ test("返回的是新对象，不改调用方传进来的", () => {
   out.messages.push(msg("assistant", "b"));
   out.draft = "改了";
   assert.equal(JSON.stringify(input), frozen, "sanitizeChat 就地改了入参");
+});
+
+/* ------------------------------------------------------------------ *
+ * citations：渲染层会直接读 citation.text.length，脏引用必须被剔除
+ * ------------------------------------------------------------------ */
+
+const goodCitation = {
+  doc_id: "doc_1",
+  doc_name: "doc.txt",
+  chunk_index: 2,
+  text: "引用正文",
+  score: 0.8,
+};
+
+test("isCitation：完整引用通过，缺字段/类型错/NaN 一律拒", () => {
+  assert.equal(isCitation(goodCitation), true);
+  for (const bad of [
+    null,
+    {},
+    { ...goodCitation, text: 42 },
+    { ...goodCitation, doc_id: undefined },
+    { ...goodCitation, chunk_index: "2" },
+    { ...goodCitation, chunk_index: Number.NaN },
+    { ...goodCitation, score: Number.POSITIVE_INFINITY },
+  ]) {
+    assert.equal(isCitation(bad), false, `${JSON.stringify(bad)} 不该通过`);
+  }
+});
+
+test("非法 citations 被剔除，但消息本身保留", () => {
+  const out = sanitizeChat({
+    messages: [
+      {
+        role: "assistant",
+        content: "回答",
+        citations: [goodCitation, { text: 1 }, null, "x"],
+      },
+    ],
+    draft: "",
+  });
+  assert.deepEqual(out.messages[0].citations, [goodCitation]);
+  assert.equal(out.messages[0].content, "回答");
+});
+
+test("citations 不是数组时整个字段被丢掉，渲染不会崩", () => {
+  const out = sanitizeChat({
+    messages: [{ role: "assistant", content: "回答", citations: "not-an-array" }],
+    draft: "",
+  });
+  assert.equal("citations" in out.messages[0], false);
+});
+
+test("所有 citations 都非法时不留下空数组（避免渲染出空引用区）", () => {
+  const out = sanitizeChat({
+    messages: [{ role: "assistant", content: "回答", citations: [{ text: 1 }] }],
+    draft: "",
+  });
+  assert.equal("citations" in out.messages[0], false);
+});
+
+test("合法 timestamp 保留，非法 timestamp 不写进结果", () => {
+  const out = sanitizeChat({
+    messages: [
+      { ...msg("user", "a"), timestamp: 1700000000000 },
+      { ...msg("user", "b"), timestamp: "昨天" },
+      { ...msg("user", "c"), timestamp: Number.NaN },
+    ],
+    draft: "",
+  });
+  assert.equal(out.messages[0].timestamp, 1700000000000);
+  assert.equal("timestamp" in out.messages[1], false);
+  assert.equal("timestamp" in out.messages[2], false);
 });

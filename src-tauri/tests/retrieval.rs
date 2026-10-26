@@ -112,6 +112,28 @@ fn 同分切片按稳定次序给出不随机器变化的证据() {
     assert_eq!(idx, vec![0, 1, 2], "同分时的次序必须确定: {idx:?}");
 }
 
+#[test]
+fn 相关度按本次最高分归一化_不冒充概率() {
+    // BM25 原始分没有上界：4.0 分不是 400%，直接乘 100 当百分比是假数值。
+    // 归一化后第一名 = 1.0，其余是相对比例。
+    let mut hits = vec![(chunk("a", 0, "证书"), 4.0), (chunk("b", 1, "证书"), 1.0)];
+    rag::normalize_scores(&mut hits);
+    assert_eq!(hits[0].1, 1.0);
+    assert_eq!(hits[1].1, 0.25);
+}
+
+#[test]
+fn 空结果或全零归一化不炸() {
+    let mut empty: Vec<(Chunk, f64)> = vec![];
+    rag::normalize_scores(&mut empty);
+    assert!(empty.is_empty());
+
+    let mut zeros = vec![(chunk("a", 0, "x"), 0.0), (chunk("b", 1, "x"), 0.0)];
+    rag::normalize_scores(&mut zeros);
+    assert_eq!(zeros[0].1, 0.0);
+    assert_eq!(zeros[1].1, 0.0);
+}
+
 fn temp_dir(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("z-kb-{}-{}", tag, std::process::id()))
 }

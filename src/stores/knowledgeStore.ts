@@ -23,11 +23,26 @@ export interface Citation {
   score: number;
 }
 
+export interface DocumentChunk {
+  doc_id: string;
+  doc_name: string;
+  index: number;
+  text: string;
+}
+
+export interface DocumentDetail {
+  meta: DocumentInfo;
+  total_chunks: number;
+  chunks: DocumentChunk[];
+  truncated: boolean;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
-  timestamp: number;
+  // 旧版本快照可能没有时间戳；消息本身仍然可显示，不必因此丢掉
+  timestamp?: number;
 }
 
 export interface LlmConfig {
@@ -71,13 +86,44 @@ export function isChatMessage(m: unknown): m is ChatMessage {
   return (x.role === "user" || x.role === "assistant") && typeof x.content === "string";
 }
 
+// 引用来自 localStorage 里的历史快照，同样可能是脏的：
+// `citation.text.length` 在渲染时会被直接读，`text` 不是字符串就会白屏。
+export function isCitation(c: unknown): c is Citation {
+  if (!c || typeof c !== "object") return false;
+  const x = c as Record<string, unknown>;
+  return (
+    typeof x.doc_id === "string" &&
+    typeof x.doc_name === "string" &&
+    typeof x.text === "string" &&
+    typeof x.chunk_index === "number" &&
+    Number.isFinite(x.chunk_index) &&
+    typeof x.score === "number" &&
+    Number.isFinite(x.score)
+  );
+}
+
+function sanitizeMessage(m: ChatMessage): ChatMessage {
+  const out: ChatMessage = { role: m.role, content: m.content };
+  if (typeof m.timestamp === "number" && Number.isFinite(m.timestamp)) {
+    out.timestamp = m.timestamp;
+  }
+  if (Array.isArray(m.citations)) {
+    const valid = m.citations.filter(isCitation);
+    if (valid.length > 0) out.citations = valid;
+  }
+  return out;
+}
+
 const EMPTY_SNAPSHOT: ChatSnapshot = { messages: [], draft: "" };
 
 export function sanitizeChat(state: unknown): ChatSnapshot {
   const s = (state ?? {}) as Partial<ChatSnapshot>;
   return {
     messages: Array.isArray(s.messages)
-      ? s.messages.filter(isChatMessage).slice(-MAX_PERSISTED_MESSAGES)
+      ? s.messages
+          .filter(isChatMessage)
+          .map(sanitizeMessage)
+          .slice(-MAX_PERSISTED_MESSAGES)
       : [],
     draft: typeof s.draft === "string" ? s.draft : "",
   };
@@ -120,6 +166,7 @@ interface KnowledgeState {
 
   // 操作
   loadDocuments: () => Promise<void>;
+  getDocumentDetail: (docId: string) => Promise<DocumentDetail>;
   uploadDocument: (filePath: string, fileName: string) => Promise<void>;
   deleteDocument: (docId: string) => Promise<void>;
   askQuestion: (question: string) => Promise<void>;
@@ -156,6 +203,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         } catch (e) {
           set({ loadingDocs: false, docsError: toMessage(e) });
         }
+      },
+
+      getDocumentDetail: async (docId: string) => {
+        return invoke<DocumentDetail>("get_document_detail", { docId });
       },
 
       uploadDocument: async (filePath: string, fileName: string) => {

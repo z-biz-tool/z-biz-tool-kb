@@ -36,6 +36,23 @@ pub struct Chunk {
     pub text: String,
 }
 
+/// 文档详情（只读预览）：元数据 + 前 N 个切片。
+///
+/// `chunks` 里的 `text` 已按 `truncate_preview` 截断，`total_chunks` 是盘上真实数量 ——
+/// 前端据此显示「仅展示前 N 个，共 M 个」，不把截断后的条数冒充全量。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentDetail {
+    pub meta: DocumentMeta,
+    pub total_chunks: usize,
+    pub chunks: Vec<Chunk>,
+    pub truncated: bool,
+}
+
+/// 详情抽屉一次最多展示多少切片
+pub const DETAIL_CHUNK_LIMIT: usize = 20;
+/// 单个切片在详情里最多展示多少字符
+pub const DETAIL_CHUNK_MAX_CHARS: usize = 600;
+
 // ============================================================
 // 存储管理
 // ============================================================
@@ -594,6 +611,78 @@ pub fn list_documents(data_dir: &Path) -> Result<Vec<DocumentMeta>, String> {
     Ok(docs)
 }
 
+/// 按字符（不是字节）截断预览文本；真的截断了才补 `…`。
+///
+/// 用 `chars()` 而不是字节切片：中文一个字 3 字节，按字节切会落到
+/// UTF-8 中间，`&text[..n]` 直接 panic。
+pub fn truncate_preview(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (count, c) in text.chars().enumerate() {
+        if count == max_chars {
+            out.push('…');
+            return out;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 读取单篇文档的详情预览（只读）。
+///
+/// `doc_id` 与删除/切片路径共用 `doc_file_path` 的白名单 + 目录包含性双闸，
+/// 不接受任何路径分隔符 —— 详情命令虽然是读，读取目录外文件同样是越权。
+pub fn load_document_detail(
+    data_dir: &Path,
+    doc_id: &str,
+    limit: usize,
+    max_chars: usize,
+) -> Result<DocumentDetail, String> {
+    let meta_path = doc_file_path(&data_dir.join("documents"), doc_id)?;
+    if !meta_path.exists() {
+        return Err(format!("文档不存在或已被删除: {}", doc_id));
+    }
+    let meta_text =
+        fs::read_to_string(&meta_path).map_err(|e| format!("读取文档元数据失败: {}", e))?;
+    let meta: DocumentMeta =
+        serde_json::from_str(&meta_text).map_err(|e| format!("文档元数据损坏: {}", e))?;
+
+    let chunks_dir = data_dir.join("chunks");
+    let chunks = if chunks_dir.exists() {
+        let chunks_path = doc_file_path(&chunks_dir, doc_id)?;
+        if chunks_path.exists() {
+            let raw =
+                fs::read_to_string(&chunks_path).map_err(|e| format!("读取文档切片失败: {}", e))?;
+            serde_json::from_str::<Vec<Chunk>>(&raw).map_err(|e| format!("文档切片损坏: {}", e))?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let total_chunks = chunks.len();
+    let limit = limit.max(1);
+    let truncated = total_chunks > limit;
+    let preview = chunks
+        .into_iter()
+        .take(limit)
+        .map(|mut chunk| {
+            chunk.text = truncate_preview(&chunk.text, max_chars);
+            chunk
+        })
+        .collect();
+
+    Ok(DocumentDetail {
+        meta,
+        total_chunks,
+        chunks: preview,
+        truncated,
+    })
+}
+
 /// 删除文档
 pub fn delete_document(data_dir: &Path, doc_id: &str) -> Result<(), String> {
     // 2026-10-05 补：原先直接把前端传来的 doc_id 拼进路径就 remove_file，
@@ -894,6 +983,21 @@ pub fn search_corpus(
 /// 直接对给定切片集合检索（测试与一次性调用用，不带缓存）
 pub fn bm25_search(question: &str, chunks: &[Chunk], top_n: usize) -> Vec<(Chunk, f64)> {
     ChunkIndex::build(chunks).search(question, top_n)
+}
+
+/// 把一次检索结果按本次最高分归一化到 (0, 1]。
+///
+/// BM25 分数没有上界，也不是概率 —— 前端原先把原始分数乘 100 显示成
+/// 「相关度 87.3%」，那是编造出来的数值。归一化后只能说「相对相关度」：
+/// 本次第一名为 100%，其余是相对它的比例，仅用于横向比较。
+pub fn normalize_scores(hits: &mut [(Chunk, f64)]) {
+    let max = hits.iter().map(|(_, s)| *s).fold(0.0f64, f64::max);
+    if max <= 0.0 || !max.is_finite() {
+        return;
+    }
+    for (_, score) in hits.iter_mut() {
+        *score = (*score / max).clamp(0.0, 1.0);
+    }
 }
 
 // ============================================================

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Input, Button, Typography, Tag, Tooltip, Space } from "antd";
+import { Input, Button, Typography, Tag, Tooltip, Space, Popconfirm, message } from "antd";
 import {
   SendOutlined,
   ClearOutlined,
@@ -11,6 +11,7 @@ import {
 import { useKnowledgeStore } from "../stores/knowledgeStore";
 import type { Citation, ChatMessage } from "../stores/knowledgeStore";
 import { EmptyState, ErrorState } from "../_shared";
+import { clearChatConfirmText } from "../lib/docView";
 
 const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
@@ -104,34 +105,66 @@ function renderInlineCode(text: string): React.ReactNode {
 function CitationCard({ citation, index }: { citation: Citation; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = citation.text.length > 150;
+  const toggle = () => setExpanded((v) => !v);
 
   return (
     <div
-      className={`citation-card ${expanded ? "expanded" : ""}`}
-      onClick={() => isLong && setExpanded(!expanded)}
+      className={`citation-card ${expanded ? "expanded" : ""} ${
+        isLong ? "citation-card-clickable" : ""
+      }`}
+      role={isLong ? "button" : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      aria-expanded={isLong ? expanded : undefined}
+      aria-label={
+        isLong
+          ? `${expanded ? "收起" : "展开"}「${citation.doc_name}」切片 #${citation.chunk_index}`
+          : undefined
+      }
+      onClick={isLong ? toggle : undefined}
+      onKeyDown={
+        isLong
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggle();
+              }
+            }
+          : undefined
+      }
       style={{
         background: cardBgGradient,
         borderRadius: 8,
         padding: 10,
         border: `1px solid rgba(102,126,234,0.15)`,
         transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        cursor: isLong ? "pointer" : "default",
       }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(102,126,234,0.15)";
-        (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.3)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.boxShadow = "none";
-        (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.15)";
-      }}
+      onMouseEnter={
+        isLong
+          ? (e) => {
+              (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(102,126,234,0.15)";
+              (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.3)";
+            }
+          : undefined
+      }
+      onMouseLeave={
+        isLong
+          ? (e) => {
+              (e.currentTarget as HTMLElement).style.boxShadow = "none";
+              (e.currentTarget as HTMLElement).style.borderColor = "rgba(102,126,234,0.15)";
+            }
+          : undefined
+      }
     >
       <div className="citation-meta" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <Tag color="blue" style={{ fontSize: 10, margin: 0, borderRadius: 3 }}>
           {citation.doc_name}
         </Tag>
-        <span style={{ color: "var(--ant-color-text-tertiary)", fontSize: 10 }}>
-          切片 #{citation.chunk_index} · 相关度 {(citation.score * 100).toFixed(1)}%
-        </span>
+        <Tooltip title="以本次检索的最高匹配分为 100%，仅用于横向比较，不代表概率">
+          <span style={{ color: "var(--ant-color-text-tertiary)", fontSize: 10 }}>
+            切片 #{citation.chunk_index} · 相对相关度 {(citation.score * 100).toFixed(1)}%
+          </span>
+        </Tooltip>
         {isLong && (
           <span style={{ color: "#667eea", fontSize: 10, marginLeft: "auto", cursor: "pointer" }}>
             {expanded ? "收起" : "展开"}
@@ -161,7 +194,17 @@ function CitationsSection({ citations }: { citations: Citation[] }) {
     <div className="citations-section" style={{ marginTop: 10 }}>
       <div 
         className="citation-header" 
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        aria-label={`引用溯源，${citations.length} 条`}
         onClick={() => setCollapsed(!collapsed)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setCollapsed((v) => !v);
+          }
+        }}
         style={{
           display: "flex",
           alignItems: "center",
@@ -275,6 +318,9 @@ export default function ChatPanel() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Logs/设置/文档详情等弹层打开时，快捷键让位给弹层（Esc 由 antd 处理）
+      if (document.querySelector('[role="dialog"]')) return;
+
       const target = e.target as HTMLElement | null;
       const inEditable =
         !!target &&
@@ -339,23 +385,40 @@ export default function ChatPanel() {
             </Tag>
           )}
           {messages.length > 0 && (
-            <Tooltip title="清空对话">
-              <Button
-                type="text"
-                icon={<ClearOutlined />}
-                onClick={clearMessages}
-                style={{
-                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = "#ff4d4f";
-                  (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = "";
-                  (e.currentTarget as HTMLElement).style.transform = "";
-                }}
-              />
+            <Tooltip title={asking ? "回答生成中，完成后再清空" : "清空对话"}>
+              <span style={{ display: "inline-flex" }}>
+                <Popconfirm
+                  title="清空全部对话？"
+                  description={clearChatConfirmText(messages.length)}
+                  okText="清空"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  cancelButtonProps={{ autoFocus: true }}
+                  disabled={asking}
+                  onConfirm={() => {
+                    clearMessages();
+                    message.success("已清空对话");
+                  }}
+                >
+                  <Button
+                    type="text"
+                    icon={<ClearOutlined />}
+                    aria-label="清空对话"
+                    disabled={asking}
+                    style={{
+                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = "#ff4d4f";
+                      (e.currentTarget as HTMLElement).style.transform = "scale(1.1)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = "";
+                      (e.currentTarget as HTMLElement).style.transform = "";
+                    }}
+                  />
+                </Popconfirm>
+              </span>
             </Tooltip>
           )}
         </Space>
@@ -377,7 +440,16 @@ export default function ChatPanel() {
                 <div 
                   key={i} 
                   className="suggestion-item" 
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`提问：${s}`}
                   onClick={() => handleSend(s)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleSend(s);
+                    }
+                  }}
                   style={{
                     padding: "10px 14px",
                     background: cardBgGradient,
@@ -485,6 +557,7 @@ export default function ChatPanel() {
           <Button
             type="primary"
             icon={<SendOutlined />}
+            aria-label="发送问题"
             onClick={() => handleSend()}
             loading={asking}
             disabled={!draft.trim()}
