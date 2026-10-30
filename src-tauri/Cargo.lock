@@ -479,6 +479,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cap-hub"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+]
+
+[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6085,6 +6094,7 @@ dependencies = [
 name = "z-biz-tool-kb"
 version = "0.2.1"
 dependencies = [
+ "cap-hub",
  "chrono",
  "getrandom 0.2.17",
  "pdf-extract",
