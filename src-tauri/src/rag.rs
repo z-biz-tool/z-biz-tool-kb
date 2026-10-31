@@ -1030,9 +1030,46 @@ struct ChatChoice {
     message: ChatMessage,
 }
 
+/// 该地址是否指向本机 / 局域网。
+///
+/// 这类地址上的 OpenAI 兼容服务（llama.cpp、Ollama、LM Studio、家里的 mini）
+/// 没有鉴权层。判据与 `cap-llm::is_private_endpoint` 同源，本仓未依赖该 crate。
+fn is_private_endpoint(url: &str) -> bool {
+    let rest = url.trim();
+    let hostport = rest.split("://").nth(1).unwrap_or(rest);
+    let hostport = hostport.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = match hostport.rfind('@') {
+        Some(i) => &hostport[i + 1..],
+        None => hostport,
+    };
+    let host = match hostport.strip_prefix('[') {
+        Some(r) => r.split(']').next().unwrap_or(r),
+        None => hostport.split(':').next().unwrap_or(hostport),
+    }
+    .to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    if host == "localhost" || host == "host.docker.internal" {
+        return true;
+    }
+    if host.ends_with(".local") || host.ends_with(".lan") || host.ends_with(".internal") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => {
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+        }
+        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
 /// 调用OpenAI兼容LLM API
 pub async fn call_llm(config: &LlmConfig, question: &str, context: &str) -> Result<String, String> {
-    if config.api_key.is_empty() {
+    // 本地/内网自建服务没有鉴权层，不该逼用户填一个假密钥
+    // （2026-10-31 修：此前空 key 一律拒，指向 mini 网关时问答功能直接用不了）
+    if config.api_key.is_empty() && !is_private_endpoint(&config.base_url) {
         return Err("API Key未配置，请先在设置中配置LLM API Key".to_string());
     }
 
@@ -1069,10 +1106,14 @@ pub async fn call_llm(config: &LlmConfig, question: &str, context: &str) -> Resu
         .build()
         .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
-    let resp = client
+    // 空 key 就不发 `Authorization: Bearer `（个别网关会当成错误凭据回 401）
+    let mut req = client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/json");
+    if !config.api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", config.api_key));
+    }
+    let resp = req
         .json(&request)
         .send()
         .await
@@ -1188,5 +1229,32 @@ mod minimax_live_tests {
             err.contains("401") || err.contains("403"),
             "期望 401/403，实际：{err}"
         );
+    }
+
+    /// 指向**无鉴权的本地网关**时必须能问答（未设 `ZBIZ_GW` 时静默跳过）。
+    ///
+    /// ```sh
+    /// ZBIZ_GW=http://192.168.31.249:8200/v1 ZBIZ_MODEL=zBiz-Text-35B \
+    ///   cargo test --manifest-path z-biz-tool-kb/src-tauri/Cargo.toml live_zbiz -- --nocapture
+    /// ```
+    #[tokio::test]
+    async fn live_zbiz_gateway_accepts_keyless() {
+        let Ok(gw) = std::env::var("ZBIZ_GW") else {
+            return;
+        };
+        let cfg = LlmConfig {
+            base_url: gw.clone(),
+            api_key: String::new(), // 本地网关没有鉴权层
+            model: std::env::var("ZBIZ_MODEL").unwrap_or_else(|_| "zBiz-Text-35B".to_string()),
+        };
+        let out = call_llm(
+            &cfg,
+            "这份文档讲了什么？",
+            "文档内容：zBiz 是跑在本机上的 AI 服务栈，提供文本、语音、图像、视频四种能力。",
+        )
+        .await
+        .expect("免 Key 的本地网关调用失败");
+        assert!(!out.trim().is_empty(), "返回为空（网关 {gw}）");
+        eprintln!("[LIVE kb → {gw}] {}", out.trim());
     }
 }
