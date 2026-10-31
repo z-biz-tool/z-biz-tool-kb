@@ -1,0 +1,16 @@
+{
+  "id": "kb",
+  "displayName": "知识管理 + RAG 问答",
+  "description": "知识文档管理与基于知识库的问答",
+  "acceptsDeepLink": true,
+  "actions": [
+    "open",
+    "ask"
+  ],
+  "keywords": [
+    "知识库",
+    "文档",
+    "问答",
+    "RAG"
+  ]
+}
