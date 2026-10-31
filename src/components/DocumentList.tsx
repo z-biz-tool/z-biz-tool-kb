@@ -60,8 +60,9 @@ export default function DocumentList() {
   const getDocumentDetail = useKnowledgeStore((s) => s.getDocumentDetail);
   const deleteDocument = useKnowledgeStore((s) => s.deleteDocument);
   const docsError = useKnowledgeStore((s) => s.docsError);
-  const pendingDocId = useKnowledgeStore((s) => s.pendingDocId);
-  const setPendingDocId = useKnowledgeStore((s) => s.setPendingDocId);
+  const pendingDoc = useKnowledgeStore((s) => s.pendingDoc);
+  const setPendingDoc = useKnowledgeStore((s) => s.setPendingDoc);
+  const docsLoaded = useKnowledgeStore((s) => s.docsLoaded);
 
   const [searchKeyword, setSearchKeyword] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -104,15 +105,30 @@ export default function DocumentList() {
     }
   };
 
-  // 家族深链（zbiz://kb/open?doc=…）请求打开某篇文档。文档列表是异步的，
-  // 所以 pendingDocId 可以先挂着；列表到位后在这里匹配并打开抽屉。
+  // 家族深链（zbiz://kb/open?doc=… 或 ?name=…）请求打开某篇文档。
+  //
+  // 文档列表是异步加载的，所以 pendingDoc 可以先挂着；列表到位后在这里匹配并打开抽屉。
+  // 匹配时 id 优先、name 兜底 —— 发深链的人（box / note）往往只拿得到文件名。
+  //
+  // 找不到时**必须**清掉 pendingDoc 并给出可见提示：留着它，下次列表一变就会再匹配一次，
+  // 而用户那边始终是「点了没反应」，无从判断是文件名写错了还是压根没入库。
   useEffect(() => {
-    if (!pendingDocId) return;
-    const doc = documents.find((d) => d.id === pendingDocId);
-    if (!doc) return;
+    if (!pendingDoc) return;
+    if (!docsLoaded) return; // 列表还没加载完，先挂着
+
+    const { id, name } = pendingDoc;
+    const doc =
+      (id ? documents.find((d) => d.id === id) : undefined) ??
+      (name ? documents.find((d) => d.name === name) : undefined);
+
+    if (!doc) {
+      message.warning(`库里没有找到这篇文档：${name ?? id ?? ""}`);
+      setPendingDoc(null);
+      return;
+    }
     void openDetail(doc);
-    setPendingDocId(null);
-  }, [pendingDocId, documents, openDetail, setPendingDocId]);
+    setPendingDoc(null);
+  }, [pendingDoc, documents, docsLoaded, openDetail, setPendingDoc]);
 
   const closeDetail = () => {
     // 让在途请求的结果失效，避免关闭后回写已关闭的视图

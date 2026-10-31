@@ -41,13 +41,13 @@ export default function App() {
   const loadDocuments = useKnowledgeStore((s) => s.loadDocuments);
   const loadLlmConfig = useKnowledgeStore((s) => s.loadLlmConfig);
   const setShowSettings = useKnowledgeStore((s) => s.setShowSettings);
-  const setPendingDocId = useKnowledgeStore((s) => s.setPendingDocId);
+  const setPendingDoc = useKnowledgeStore((s) => s.setPendingDoc);
   const setDraft = useKnowledgeStore((s) => s.setDraft);
   const [collapsed, setCollapsed] = useState(() => readPrefs().sidebarCollapsed);
 
-  // 家族深链（zbiz://kb/open?doc=… / zbiz://kb/ask?q=…）：box 等产品递过来的意图。
+  // 家族深链（zbiz://kb/open?doc=… 或 ?name=… / zbiz://kb/ask?q=…）：box 等产品递过来的意图。
   // 机制收敛到共享层 startDeepLinkReceiver（冷启动补取 + 二次唤起 + 不静默吞掉），
-  // 本仓只把语义落地：open 填 pendingDocId，ask 填提问框。
+  // 本仓只把语义落地：open 填 pendingDoc，ask 填提问框。
   useEffect(() => {
     const stop = startDeepLinkReceiver({
       productId: "kb",
@@ -64,14 +64,16 @@ export default function App() {
       onProblem: (msg) => { message.warning(msg); },
       onEffect: (effect) => {
         const docId = (effect.docId as string | null) ?? null;
+        const docName = (effect.docName as string | null) ?? null;
         const question = (effect.question as string | null) ?? null;
-        if (docId) setPendingDocId(docId);
+        // id 与 name 都传：发链方常常只有文件名，只传 id 会让那条深链落不了地
+        if (docId || docName) setPendingDoc({ id: docId, name: docName });
         if (question) setDraft(question);
       },
       log: (msg, item) => console.debug("[kb] 深链", msg, item),
     });
     return () => { stop(); };
-  }, [setPendingDocId, setDraft]);
+  }, [setPendingDoc, setDraft]);
 
   const openSettings = useCallback(() => {
     // 每次打开都重读一次，避免展示启动时的旧配置

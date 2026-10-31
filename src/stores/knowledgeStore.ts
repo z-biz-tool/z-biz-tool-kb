@@ -150,6 +150,14 @@ interface KnowledgeState {
   // 文档列表
   documents: DocumentInfo[];
   loadingDocs: boolean;
+  /**
+   * 列表**至少加载过一次**（成功或失败都算）。
+   *
+   * 只看 `loadingDocs === false` 分不出「还没开始加载」和「加载完了但库里没这篇」——
+   * 两者都是空数组 + 不转圈。深链要按 name 兜底找文档，分不清就只能一直挂着等，
+   * 用户看到的是「点了没反应」。有了这个标志，找不到时能给出「库里没有这篇」的提示。
+   */
+  docsLoaded: boolean;
   docsError: string | null;
 
   // 对话历史
@@ -178,7 +186,7 @@ interface KnowledgeState {
   clearMessages: () => void;
 
   /**
-   * 待打开的文档 id。
+   * 待打开的文档。
    *
    * 详情抽屉原本是 DocumentList 的局部 state，深链接（在 App 层）够不着它。
    * 所以把「要打开哪篇」提到 store 里：深链接填这个字段，
@@ -186,9 +194,13 @@ interface KnowledgeState {
    *
    * 文档列表是异步加载的，所以这个字段要能在「列表还没到」时先挂着 ——
    * 文档列表到位后 DocumentList 会重新匹配。
+   *
+   * id 与 name **两个都存**：发深链的人（box / note）往往只拿得到文件名，
+   * 只存 id 的话，`zbiz://kb/open?name=xxx.pdf` 会被静默吞掉 —— 用户点了没反应。
+   * 匹配时 id 优先，匹配不到再按 name 兜底。
    */
-  pendingDocId: string | null;
-  setPendingDocId: (docId: string | null) => void;
+  pendingDoc: { id: string | null; name: string | null } | null;
+  setPendingDoc: (doc: { id: string | null; name: string | null } | null) => void;
 }
 
 const hydrated = readSnapshot();
@@ -196,6 +208,7 @@ const hydrated = readSnapshot();
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       documents: [],
       loadingDocs: false,
+      docsLoaded: false,
       docsError: null,
 
       messages: hydrated.messages,
@@ -208,8 +221,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       llmConfigError: null,
       showSettings: false,
 
-      pendingDocId: null,
-      setPendingDocId: (pendingDocId) => set({ pendingDocId }),
+      pendingDoc: null,
+      setPendingDoc: (pendingDoc) => set({ pendingDoc }),
 
       loadDocuments: async () => {
         set({ loadingDocs: true });
@@ -219,6 +232,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         } catch (e) {
           set({ loadingDocs: false, docsError: toMessage(e) });
         }
+        // 成功失败都置位：深链落地不能因为一次加载失败就永远挂着等
+        set({ docsLoaded: true });
       },
 
       getDocumentDetail: async (docId: string) => {
