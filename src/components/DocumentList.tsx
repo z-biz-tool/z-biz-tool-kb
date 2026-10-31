@@ -60,6 +60,8 @@ export default function DocumentList() {
   const getDocumentDetail = useKnowledgeStore((s) => s.getDocumentDetail);
   const deleteDocument = useKnowledgeStore((s) => s.deleteDocument);
   const docsError = useKnowledgeStore((s) => s.docsError);
+  const pendingDocId = useKnowledgeStore((s) => s.pendingDocId);
+  const setPendingDocId = useKnowledgeStore((s) => s.setPendingDocId);
 
   const [searchKeyword, setSearchKeyword] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -101,6 +103,16 @@ export default function DocumentList() {
       if (req === detailReqRef.current) setDetailLoading(false);
     }
   };
+
+  // 家族深链（zbiz://kb/open?doc=…）请求打开某篇文档。文档列表是异步的，
+  // 所以 pendingDocId 可以先挂着；列表到位后在这里匹配并打开抽屉。
+  useEffect(() => {
+    if (!pendingDocId) return;
+    const doc = documents.find((d) => d.id === pendingDocId);
+    if (!doc) return;
+    void openDetail(doc);
+    setPendingDocId(null);
+  }, [pendingDocId, documents, openDetail, setPendingDocId]);
 
   const closeDetail = () => {
     // 让在途请求的结果失效，避免关闭后回写已关闭的视图

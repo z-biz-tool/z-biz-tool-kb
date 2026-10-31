@@ -176,6 +176,19 @@ interface KnowledgeState {
   setShowSettings: (show: boolean) => void;
   setDraft: (text: string) => void;
   clearMessages: () => void;
+
+  /**
+   * 待打开的文档 id。
+   *
+   * 详情抽屉原本是 DocumentList 的局部 state，深链接（在 App 层）够不着它。
+   * 所以把「要打开哪篇」提到 store 里：深链接填这个字段，
+   * DocumentList 看到它变化且文档列表已就绪时就打开抽屉。
+   *
+   * 文档列表是异步加载的，所以这个字段要能在「列表还没到」时先挂着 ——
+   * 文档列表到位后 DocumentList 会重新匹配。
+   */
+  pendingDocId: string | null;
+  setPendingDocId: (docId: string | null) => void;
 }
 
 const hydrated = readSnapshot();
@@ -194,6 +207,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       llmConfig: null,
       llmConfigError: null,
       showSettings: false,
+
+      pendingDocId: null,
+      setPendingDocId: (pendingDocId) => set({ pendingDocId }),
 
       loadDocuments: async () => {
         set({ loadingDocs: true });
