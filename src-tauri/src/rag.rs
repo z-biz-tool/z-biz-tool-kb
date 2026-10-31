@@ -1107,9 +1107,7 @@ pub async fn call_llm(config: &LlmConfig, question: &str, context: &str) -> Resu
         .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
     // 空 key 就不发 `Authorization: Bearer `（个别网关会当成错误凭据回 401）
-    let mut req = client
-        .post(&url)
-        .header("Content-Type", "application/json");
+    let mut req = client.post(&url).header("Content-Type", "application/json");
     if !config.api_key.is_empty() {
         req = req.header("Authorization", format!("Bearer {}", config.api_key));
     }
