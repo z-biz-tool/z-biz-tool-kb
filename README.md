@@ -1,9 +1,10 @@
 # z-biz-tool-kb
 
-> ⚠️ **本仓已并入 note（2026-10-26），进入维护冻结：不再加功能、不再发版。**
+> 🪦 **本仓已归档（2026-11-01）：协议层已摘除 `kb` 产品 id，不再发版、不再接受任何改动。**
+> 最后一个功能版本是 v0.2.2（应用内含「已并入 ZenNote」迁移提示）。
 >
 > 用户要的是「一个能问自己笔记的东西」，而不是装两个 app 拼出来。kb 的能力
-> 已经按下面的去向搬进了 z-biz-tool-note：
+> 已经按下面的去向全部搬完：
 >
 > | kb 原有能力 | 去向 |
 > | --- | --- |
@@ -11,9 +12,12 @@
 > | 文本切片 | 重写为按 Markdown 结构切（`rag/chunk.rs`）：标题路径 + 段落边界 + 代码块不切半 |
 > | 问答 + 引用溯源 | `ask_notes` 命令 + note 的「问笔记」面板，引用可点回原文对应段落 |
 > | OpenAI 兼容调用 | cap-llm（家族统一 AI 接入层），kb 自己那份 `call_llm` 删除 |
-> | PDF/Word/PPT 上传问答 | **暂未迁移**：笔记是本地的，语料 = 你的笔记库；外部文档导入留作后续（届时走 cap-doc） |
+> | PDF/Word/PPT 上传问答 | **已迁移（2026-11-01）**：解析原语进 cap-doc（pdf 现成 + 新增 `ooxml` 模块 docx/pptx）；note 的 pdf/docx 查看器「转为笔记」入口把外部文档收进检索语料 |
 >
-> kb 仓库保留作为历史参考，不要基于它继续开发。
+> 家族协议位：`cap-hub::PRODUCT_IDS` / `shared::ProductId` / lead 对账与
+> bootstrap manifest 均已同步摘除（归档仓豁免见 lead reconcile 的
+> `RETIRED_REPOS`）。cap-llm-config 的**迁移源保留**——存量用户的明文
+> Key 还要从旧 kb 数据目录迁到统一落点。
 
 知识管理 + RAG问答桌面应用，基于 Tauri 2.0 + React 19 + Ant Design 6 + TypeScript。
 
