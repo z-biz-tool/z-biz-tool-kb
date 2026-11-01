@@ -521,6 +521,7 @@ dependencies = [
 name = "cap-llm-config"
 version = "0.1.0"
 dependencies = [
+ "cap-llm",
  "keyring",
  "serde",
  "serde_json",
@@ -6265,7 +6266,7 @@ dependencies = [
 
 [[package]]
 name = "z-biz-tool-kb"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "cap-hub",
  "cap-llm",

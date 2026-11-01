@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Tooltip, ConfigProvider, message } from "antd";
+import { Alert, Button, Tooltip, ConfigProvider, message } from "antd";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { startDeepLinkReceiver, ZBIZ_TAKE_PENDING } from "z-biz-tool-shared/protocol";
@@ -156,6 +156,16 @@ export default function App() {
           headerExtra={headerExtra}
           siderWidth={320}
         >
+          {/* 终版迁移提示（v0.2.2 起，本仓已冻结）：kb 的能力已并入 note，
+              note 在文档查看器上加「转为笔记」即可把 pdf/docx/pptx 收进检索语料；
+              本应用只保证已上传文档的读取与问答可用，不再接收新功能与新发版后的更新。 */}
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="知识库已并入 ZenNote（note）"
+            description="本应用进入维护冻结，不再新增功能。要继续问你的文档：打开 ZenNote，在文件树打开 pdf / docx / pptx，点工具栏「转为笔记」，之后即可被检索和「问笔记」引用。已有文档在只读模式下继续可用。"
+          />
           <ChatPanel />
           <LlmSettingsModal />
         </AppShell>
