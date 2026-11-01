@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 mod commands;
+pub mod llm_shared;
 pub mod rag;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -32,13 +33,24 @@ pub fn run() {
             commands::get_document_detail,
             commands::delete_document,
             commands::ask_question,
-            commands::get_llm_config,
-            commands::set_llm_config,
+            llm_shared::get_ai_config,
+            llm_shared::save_ai_config,
+            llm_shared::test_ai_config,
+            llm_shared::list_llm_presets,
+            llm_shared::list_llm_models,
             zbiz_take_pending,
         ])
         .setup(move |app| {
             // 冷启动时 argv 里就可能带着深链；先入队，前端 mount 后再取。
             cap_hub::receiver::seed_cold_start(app.handle(), &zbiz_pending);
+            // 迁移一次历史 AI 配置到家族统一落点（幂等；失败不阻断启动）。
+            // 本仓旧落点是明文 llm_config.json，迁移器会把明文密钥搬进
+            // OS 密钥库并抹掉旧文件里的密钥字段。
+            match llm_shared::migrate_legacy() {
+                Ok(Some(from)) => eprintln!("已把 {} 的 AI 配置迁移到家族统一位置", from),
+                Ok(None) => {}
+                Err(e) => eprintln!("AI 配置迁移未完成, 本次按现状继续运行: {}", e),
+            }
             // 初始化知识库存储目录
             let app_data_dir = app.path().app_data_dir().expect("无法获取应用数据目录");
             rag::init_storage(&app_data_dir).expect("初始化存储失败");

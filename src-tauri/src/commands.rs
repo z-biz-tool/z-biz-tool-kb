@@ -149,10 +149,17 @@ pub struct Citation {
 }
 
 /// 问答结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AnswerResult {
     pub answer: String,
     pub citations: Vec<Citation>,
+    /// LLM 调用失败的结构化详情（成功时为 null）。
+    ///
+    /// 2026-11-01 起：失败不再揉进答案文本。以前用户看到的是
+    /// 「调用LLM失败: …」开头的一整段，分不清是 AI 失败还是真的没答案；
+    /// 现在前端按 `failure` 分流渲染（结构化失败带 hint 与 focus）。
+    #[serde(default)]
+    pub failure: Option<cap_llm::LlmFailure>,
 }
 
 /// 发起问答
@@ -167,6 +174,7 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResu
         return Ok(AnswerResult {
             answer: "知识库中没有文档，请先上传文档。".to_string(),
             citations: vec![],
+            failure: None,
         });
     }
 
@@ -174,6 +182,7 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResu
         return Ok(AnswerResult {
             answer: "未找到与问题相关的文档内容，请尝试其他关键词。".to_string(),
             citations: vec![],
+            failure: None,
         });
     }
 
@@ -200,39 +209,21 @@ pub async fn ask_question(app: AppHandle, question: String) -> Result<AnswerResu
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
 
-    // 加载LLM配置
-    let config = rag::load_llm_config(&data_dir)?;
-
-    // 调用LLM API
-    let answer = rag::call_llm(&config, &question, &context)
-        .await
-        .unwrap_or_else(|e| format!("调用LLM失败: {}。以下是检索到的相关内容:\n\n{}", e, context));
-
-    Ok(AnswerResult { answer, citations })
-}
-
-/// 获取LLM配置
-#[tauri::command]
-pub fn get_llm_config(app: AppHandle) -> Result<rag::LlmConfig, String> {
-    let data_dir = get_data_dir(&app)?;
-    rag::load_llm_config(&data_dir)
-}
-
-/// 设置LLM配置
-#[tauri::command]
-pub fn set_llm_config(
-    app: AppHandle,
-    base_url: String,
-    api_key: String,
-    model: String,
-) -> Result<(), String> {
-    let data_dir = get_data_dir(&app)?;
-    let config = rag::LlmConfig {
-        base_url,
-        api_key,
-        model,
-    };
-    rag::save_llm_config(&data_dir, &config)
+    // 调用 LLM（配置从家族统一落点读，密钥不出 Rust）。
+    // 失败结构化回传，不再揉进答案文本 —— 用户要能区分
+    // 「AI 失败」与「真的没答案」，这两种情况的处理完全不同。
+    match rag::ask_llm(&question, &context).await {
+        Ok(answer) => Ok(AnswerResult {
+            answer,
+            citations,
+            failure: None,
+        }),
+        Err(failure) => Ok(AnswerResult {
+            answer: String::new(),
+            citations,
+            failure: Some(failure),
+        }),
+    }
 }
 
 /// 获取应用数据目录

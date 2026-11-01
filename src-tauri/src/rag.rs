@@ -1,4 +1,3 @@
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -6,14 +5,6 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-
-/// LLM配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmConfig {
-    pub base_url: String,
-    pub api_key: String,
-    pub model: String,
-}
 
 /// 文档元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,20 +97,13 @@ pub fn init_storage(data_dir: &Path) -> Result<(), String> {
     let chunks_dir = data_dir.join("chunks");
     fs::create_dir_all(&docs_dir).map_err(|e| format!("创建文档目录失败: {}", e))?;
     fs::create_dir_all(&chunks_dir).map_err(|e| format!("创建切片目录失败: {}", e))?;
-    // 这个目录里躺着明文 API key，目录本身就不该对同机其他账号可列
     harden_dir(data_dir)?;
 
-    // 如果没有配置文件，创建默认配置
+    // 旧版本在这里落过明文 llm_config.json。AI 配置已迁到家族统一落点，
+    // 这里不再代写默认配置 —— 旧文件由启动迁移器搬入统一落点并抹掉密钥。
+    // 仍然顺带把旧文件权限收紧一次（迁移前后都该是 0600）。
     let config_path = data_dir.join("llm_config.json");
-    if !config_path.exists() {
-        let default_config = LlmConfig {
-            base_url: "https://api.openai.com/v1".to_string(),
-            api_key: "".to_string(),
-            model: "gpt-4o-mini".to_string(),
-        };
-        save_llm_config(data_dir, &default_config)?;
-    } else {
-        // 旧版本落盘的文件是 0644，这里顺带收紧一次
+    if config_path.exists() {
         harden_file(&config_path);
     }
 
@@ -1003,77 +987,21 @@ pub fn normalize_scores(hits: &mut [(Chunk, f64)]) {
 // ============================================================
 // LLM API调用
 // ============================================================
+//
+// 2026-11-01 改造：本节原来是一套手写的 OpenAI 兼容 HTTP
+// （ChatRequest/ChatResponse/鉴权头拼装/错误体截断），与 file / terminal /
+// note / db 里的同类代码是同一件事的又一次重写。协议与传输收口到
+// `cap-llm`，配置从家族统一落点读（密钥在 OS 密钥库，不再明文落盘）。
 
-/// OpenAI兼容API的请求体
-#[derive(Debug, Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f64,
-    max_tokens: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-/// OpenAI兼容API的响应体
-#[derive(Debug, Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatMessage,
-}
-
-/// 该地址是否指向本机 / 局域网。
+/// 调用 LLM 回答知识库问题（RAG 问答的唯一入口）。
 ///
-/// 这类地址上的 OpenAI 兼容服务（llama.cpp、Ollama、LM Studio、家里的 mini）
-/// 没有鉴权层。判据与 `cap-llm::is_private_endpoint` 同源，本仓未依赖该 crate。
-fn is_private_endpoint(url: &str) -> bool {
-    let rest = url.trim();
-    let hostport = rest.split("://").nth(1).unwrap_or(rest);
-    let hostport = hostport.split(['/', '?', '#']).next().unwrap_or("");
-    let hostport = match hostport.rfind('@') {
-        Some(i) => &hostport[i + 1..],
-        None => hostport,
-    };
-    let host = match hostport.strip_prefix('[') {
-        Some(r) => r.split(']').next().unwrap_or(r),
-        None => hostport.split(':').next().unwrap_or(hostport),
-    }
-    .to_ascii_lowercase();
-    if host.is_empty() {
-        return false;
-    }
-    if host == "localhost" || host == "host.docker.internal" {
-        return true;
-    }
-    if host.ends_with(".local") || host.ends_with(".lan") || host.ends_with(".internal") {
-        return true;
-    }
-    match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(v4)) => {
-            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
-        }
-        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
-        Err(_) => false,
-    }
-}
-
-/// 调用OpenAI兼容LLM API
-pub async fn call_llm(config: &LlmConfig, question: &str, context: &str) -> Result<String, String> {
-    // 本地/内网自建服务没有鉴权层，不该逼用户填一个假密钥
-    // （2026-10-31 修：此前空 key 一律拒，指向 mini 网关时问答功能直接用不了）
-    if config.api_key.is_empty() && !is_private_endpoint(&config.base_url) {
-        return Err("API Key未配置，请先在设置中配置LLM API Key".to_string());
-    }
-
-    let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+/// 失败返回 `cap_llm::LlmFailure`（结构化：kind/status/message/hint/focus），
+/// 调用方决定降级还是透传 —— 本仓 `ask_question` 会把它作为 `failure`
+/// 字段回给前端，而不再把错误揉进答案文本里。
+pub async fn ask_llm(question: &str, context: &str) -> Result<String, cap_llm::LlmFailure> {
+    let (cfg, key) = crate::llm_shared::read_shared_config_with_key()
+        .map_err(cap_llm::LlmFailure::from_message)?;
+    let cap = crate::llm_shared::to_cap(&cfg, &key).map_err(cap_llm::LlmFailure::from)?;
 
     let system_prompt = format!(
         "你是一个知识库问答助手。请根据以下检索到的文档内容回答用户的问题。\n\
@@ -1085,96 +1013,31 @@ pub async fn call_llm(config: &LlmConfig, question: &str, context: &str) -> Resu
         context
     );
 
-    let request = ChatRequest {
-        model: config.model.clone(),
-        messages: vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: question.to_string(),
-            },
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-    };
-
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
-
-    // 空 key 就不发 `Authorization: Bearer `（个别网关会当成错误凭据回 401）
-    let mut req = client.post(&url).header("Content-Type", "application/json");
-    if !config.api_key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", config.api_key));
-    }
-    let resp = req
-        .json(&request)
-        .send()
+    let messages = [
+        cap_llm::Message::system(&system_prompt),
+        cap_llm::Message::user(question),
+    ];
+    let reply = cap_llm::chat(&cap, &messages)
         .await
-        .map_err(|e| format!("请求LLM API失败: {}", e))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("LLM API返回错误 ({}): {}", status, body));
-    }
-
-    let chat_resp: ChatResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析LLM响应失败: {}", e))?;
-
-    chat_resp
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .ok_or_else(|| "LLM返回空响应".to_string())
+        .map_err(cap_llm::LlmFailure::from_error)?;
+    Ok(reply.content)
 }
 
 // ============================================================
-// LLM配置管理
+// LLM配置管理 —— 已迁到家族统一落点
 // ============================================================
-
-/// 加载LLM配置
-pub fn load_llm_config(data_dir: &Path) -> Result<LlmConfig, String> {
-    let config_path = data_dir.join("llm_config.json");
-    if !config_path.exists() {
-        return Ok(LlmConfig {
-            base_url: "https://api.openai.com/v1".to_string(),
-            api_key: "".to_string(),
-            model: "gpt-4o-mini".to_string(),
-        });
-    }
-
-    let content = fs::read_to_string(&config_path).map_err(|e| format!("读取配置失败: {}", e))?;
-    // 读的时候也收一次权限：老版本落盘的是 0644，而 init_storage 未必被走到
-    harden_file(&config_path);
-    serde_json::from_str(&content).map_err(|e| format!("解析配置失败: {}", e))
-}
-
-/// 保存LLM配置
-///
-/// 2026-10-05 补：文件里存的是**明文 API key**，而原先用 `fs::write` 落盘，
-/// 权限跟着 umask 走（本机实测 0644）—— 同机任何能读这个目录的进程都拿得到。
-/// 现在走 `write_atomic`（临时文件 + 0600 + `sync_all` + rename）：
-/// 既不会出现「读到半截配置」，也不会留下一个带明文 key 的残留文件。
-pub fn save_llm_config(data_dir: &Path, config: &LlmConfig) -> Result<(), String> {
-    let config_path = data_dir.join("llm_config.json");
-    let json =
-        serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
-    write_atomic(&config_path, &json, "配置", 0o600)
-}
+//
+// 本仓原来的 `LlmConfig` / `load_llm_config` / `save_llm_config`
+// （明文 api_key 落盘 `app_data_dir()/llm_config.json`）整体退役。
+// 现在配置的读写都走 `crate::llm_shared`（统一落点 + OS 密钥库），
+// 旧明文文件由启动迁移器搬入并抹掉密钥。
 
 #[cfg(test)]
 mod minimax_live_tests {
-    use super::{call_llm, LlmConfig};
+    use super::ask_llm;
 
-    /// **真实 API 实测**：用真的 MiniMax 端点跑一遍本仓自己的 `call_llm`。
+    /// **真实 API 实测**：用真的 MiniMax 端点跑一遍本仓的接入链路
+    /// （统一落点 → `to_cap` → `cap_llm::chat` → MiniMax）。
     ///
     /// 本仓的 RAG 检索是 BM25 + 关键词（**没有向量/embeddings**），
     /// LLM 那一跳就是标准的 OpenAI 兼容 `/chat/completions` ⇒
@@ -1189,43 +1052,51 @@ mod minimax_live_tests {
             eprintln!("[LIVE] 跳过 minimax 真实 API 实测：未设置 MINIMAX_API_KEY（这是「没跑」，不是「跑过了」）");
             return;
         };
-        let cfg = LlmConfig {
-            base_url: std::env::var("MINIMAX_BASE_URL")
+        let _iso = cap_llm_config::testing::IsolatedLlm::new("kb-live-minimax");
+        crate::llm_shared::write_shared_config(
+            "minimax",
+            &std::env::var("MINIMAX_BASE_URL")
                 .unwrap_or_else(|_| "https://api.minimaxi.com/v1".to_string()),
-            api_key: key,
-            model: std::env::var("MINIMAX_MODEL")
-                .unwrap_or_else(|_| "MiniMax-M3.1-Flash".to_string()),
-        };
-        let out = call_llm(
-            &cfg,
-            "知识库里有「Z-Bot 是矩阵能力层」这一条",
-            "只回两个字：收到",
+            &std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M3.1-Flash".to_string()),
+            &key,
         )
-        .await
-        .expect("真实调用应成功");
+        .expect("写入统一落点应成功");
+        let out = ask_llm("知识库里有「Z-Bot 是矩阵能力层」这一条", "只回两个字：收到")
+            .await
+            .expect("真实调用应成功");
         assert!(!out.trim().is_empty(), "返回内容为空");
         eprintln!(
-            "[LIVE] kb call_llm 真实调用成功：{}",
+            "[LIVE] kb ask_llm 真实调用成功：{}",
             out.chars().take(40).collect::<String>()
         );
     }
 
-    /// 反向钉：假 key 必须被服务端拒。
+    /// 反向钉：假 key 必须被服务端拒，且错误分类要是 Http(401/403)。
     #[tokio::test]
     async fn minimax_live_rejects_bad_key() {
         let Ok(_key) = std::env::var("MINIMAX_API_KEY") else {
             eprintln!("[LIVE] 跳过（未设置 MINIMAX_API_KEY）");
             return;
         };
-        let cfg = LlmConfig {
-            base_url: "https://api.minimaxi.com/v1".to_string(),
-            api_key: "sk-cp-definitely-invalid-key".to_string(),
-            model: "MiniMax-M3.1-Flash".to_string(),
-        };
-        let err = call_llm(&cfg, "q", "c").await.expect_err("假 key 必须被拒");
+        let _iso = cap_llm_config::testing::IsolatedLlm::new("kb-live-badkey");
+        crate::llm_shared::write_shared_config(
+            "minimax",
+            "https://api.minimaxi.com/v1",
+            "MiniMax-M3.1-Flash",
+            "sk-cp-definitely-invalid-key",
+        )
+        .expect("写入统一落点应成功");
+        let err = ask_llm("q", "c").await.expect_err("假 key 必须被拒");
+        assert_eq!(err.kind, "http", "错误分类应是 http：{err:?}");
         assert!(
-            err.contains("401") || err.contains("403"),
-            "期望 401/403，实际：{err}"
+            err.status == Some(401) || err.status == Some(403),
+            "期望 401/403，实际：{err:?}"
+        );
+        // 结构化错误串里不能出现 key 本身
+        let rendered = format!("{:?}", err);
+        assert!(
+            !rendered.contains("sk-cp-definitely-invalid-key"),
+            "错误结构泄露了 key"
         );
     }
 
@@ -1240,13 +1111,15 @@ mod minimax_live_tests {
         let Ok(gw) = std::env::var("ZBIZ_GW") else {
             return;
         };
-        let cfg = LlmConfig {
-            base_url: gw.clone(),
-            api_key: String::new(), // 本地网关没有鉴权层
-            model: std::env::var("ZBIZ_MODEL").unwrap_or_else(|_| "zBiz-Text-35B".to_string()),
-        };
-        let out = call_llm(
-            &cfg,
+        let _iso = cap_llm_config::testing::IsolatedLlm::new("kb-live-gw");
+        crate::llm_shared::write_shared_config(
+            "zbiz-local",
+            &gw,
+            &std::env::var("ZBIZ_MODEL").unwrap_or_else(|_| "zBiz-Text-35B".to_string()),
+            "", // 本地网关没有鉴权层
+        )
+        .expect("写入统一落点应成功");
+        let out = ask_llm(
             "这份文档讲了什么？",
             "文档内容：zBiz 是跑在本机上的 AI 服务栈，提供文本、语音、图像、视频四种能力。",
         )

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use z_biz_tool_kb_lib::rag::{self, DocumentMeta, LlmConfig};
+use z_biz_tool_kb_lib::rag::{self, DocumentMeta};
 
 /// 每次调用给一个独立目录。测试之间不共享状态，失败时也不会互相污染。
 fn temp_root(tag: &str) -> PathBuf {
@@ -26,6 +26,16 @@ fn temp_root(tag: &str) -> PathBuf {
     fs::create_dir_all(p.join("documents")).expect("建 documents");
     fs::create_dir_all(p.join("chunks")).expect("建 chunks");
     p
+}
+
+/// 统一落点的隔离靠**进程级环境变量**（Z_BIZ_TOOL_LLM_DIR / 密钥库 service /
+/// 迁移器还要 HOME），并行测试互相覆盖 ⇒ 所有碰它的测试共用这一把锁。
+static LLM_ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_llm_env() -> std::sync::MutexGuard<'static, ()> {
+    LLM_ENV_GUARD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn meta_json(id: &str, created_at: &str) -> String {
@@ -179,38 +189,60 @@ fn 目录本身读不到时_仍然要报错() {
     assert_eq!(rag::load_all_chunks(&missing).unwrap().len(), 0);
 }
 
-// ---------- P0-4 明文 key 的落盘权限 ----------
+// ---------- P0-4 密钥的落盘权限（2026-11-01 起针对统一落点） ----------
+//
+// AI 配置已迁到家族统一落点（~/.z-biz-tool/llm/config.json + OS 密钥库），
+// 本仓不再有 llm_config.json。判据等价平移：统一落点的配置文件同样必须
+// 0600 且不含明文密钥。
 
 #[cfg(unix)]
 #[test]
-fn 配置文件以_0600_落盘() {
+fn 统一落点配置文件以_0600_落盘且不含明文密钥() {
     use std::os::unix::fs::PermissionsExt;
-    let root = temp_root("perms");
-    let cfg = LlmConfig {
-        base_url: "https://api.openai.com/v1".into(),
-        api_key: "sk-this-is-a-real-looking-secret".into(),
-        model: "gpt-4o-mini".into(),
-    };
-    rag::save_llm_config(&root, &cfg).expect("保存配置");
+    // IsolatedLlm 靠进程级环境变量隔离，并行测试会互相覆盖 ⇒ 串行
+    let _guard = lock_llm_env();
+    let _iso = cap_llm_config::testing::IsolatedLlm::new("doc-store-perms");
+    z_biz_tool_kb_lib::llm_shared::write_shared_config(
+        "openai",
+        "https://api.openai.com/v1",
+        "gpt-4o-mini",
+        "sk-this-is-a-real-looking-secret",
+    )
+    .expect("保存配置");
 
-    let p = root.join("llm_config.json");
+    let p = cap_llm_config::config_path().expect("取路径");
     let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o7777;
-    assert_eq!(mode, 0o600, "明文 key 文件权限应是 0600，实际 {:o}", mode);
+    assert_eq!(mode, 0o600, "配置文件权限应是 0600，实际 {:o}", mode);
 
-    // 反向对照：内容仍要能读回来，别为了收紧权限把功能弄坏
-    let back = rag::load_llm_config(&root).expect("读回配置");
-    assert_eq!(back.api_key, cfg.api_key);
-    let _ = fs::remove_dir_all(&root);
+    // 密钥不落盘（在 OS 密钥库里），盘上文件读不到它
+    let content = fs::read_to_string(&p).unwrap();
+    assert!(
+        !content.contains("sk-this-is-a-real-looking-secret"),
+        "密钥明文出现在配置文件里"
+    );
+
+    // 反向对照：非敏感字段仍要能读回来，别为了安全把功能弄坏
+    let back = z_biz_tool_kb_lib::llm_shared::read_shared_config().expect("读回配置");
+    assert_eq!(back.model, "gpt-4o-mini");
+    assert!(back.has_api_key, "密钥在密钥库里，hasApiKey 应为 true");
 }
 
 #[cfg(unix)]
 #[test]
-fn 旧的_0644_配置文件_读的时候被收紧() {
+fn 迁移器把旧_0644_明文配置搬进统一落点并抹掉密钥() {
     use std::os::unix::fs::PermissionsExt;
-    let root = temp_root("perms-legacy");
-    let p = root.join("llm_config.json");
+    // 扫描根用 migrate_legacy_in 注入到临时目录，**不动 HOME** ——
+    // macOS 上改 HOME 会让 Security 框架找不到默认钥匙串，
+    // 隔离与密钥库不能同时成立（能力层为此提供了可注入形态）。
+    let _guard = lock_llm_env();
+
+    let iso = cap_llm_config::testing::IsolatedLlm::new("doc-store-migrate");
+    let fake_home = iso.root().join("fake-home");
+    let legacy_dir = fake_home.join("Library/Application Support/com.zifang.z-biz-tool-kb");
+    fs::create_dir_all(&legacy_dir).unwrap();
+    let legacy = legacy_dir.join("llm_config.json");
     fs::write(
-        &p,
+        &legacy,
         serde_json::json!({
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-legacy",
@@ -219,12 +251,26 @@ fn 旧的_0644_配置文件_读的时候被收紧() {
         .to_string(),
     )
     .unwrap();
-    fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&legacy, fs::Permissions::from_mode(0o644)).unwrap();
 
-    rag::load_llm_config(&root).expect("读配置");
-    let mode = fs::metadata(&p).unwrap().permissions().mode() & 0o7777;
-    assert_eq!(mode, 0o600, "旧文件读一次就应收紧到 0600，实际 {:o}", mode);
-    let _ = fs::remove_dir_all(&root);
+    // 统一落点上还没有配置 ⇒ 迁移器应把这份搬进去
+    let report = cap_llm_config::migrate_legacy_in(&fake_home).expect("迁移应成功");
+    assert!(report.migrated, "应报告迁移发生：{report:?}");
+
+    let unified = cap_llm_config::config_path().expect("统一落点路径");
+    let content = fs::read_to_string(&unified).unwrap();
+    assert!(content.contains("gpt-4o-mini"), "非敏感字段应搬过来");
+    assert!(
+        !content.contains("sk-legacy"),
+        "密钥明文不得出现在统一落点（应进 OS 密钥库）"
+    );
+
+    // 旧文件里的密钥字段应被抹掉（防残留明文）
+    let after = fs::read_to_string(&legacy).unwrap();
+    assert!(
+        !after.contains("sk-legacy"),
+        "旧文件里的密钥没有被抹掉：{after}"
+    );
 }
 
 // ---------- 2026-10-19：写盘必须是原子的，且只有一套实现 ----------
@@ -477,8 +523,6 @@ fn 源码里_不再有裸的_fs_write() {
         src.contains("write_atomic(&chunks_path"),
         "save_document 的切片写入应当走 write_atomic"
     );
-    assert!(
-        src.contains("write_atomic(&config_path"),
-        "save_llm_config 的写入应当走 write_atomic"
-    );
+    // 2026-11-01：save_llm_config 已随配置迁移退役（统一落点自带原子写），
+    // rag.rs 里剩下的写盘只有文档与切片，判据随之收窄。
 }

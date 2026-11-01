@@ -24,7 +24,13 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 getrandom = "0.2"
-reqwest = { version = "0.12", features = ["json"] }
+# 家族统一 AI 接入层（2026-11-01）：本仓原手写 OpenAI 兼容 HTTP 与
+# file/terminal/note 里的同类代码是同一件事的又一次重写。协议、鉴权头、
+# 错误脱敏（不泄密钥、不泄用户原文）全收口到 cap-llm。
+cap-llm = { path = "../../z-biz-tool-capability/crates/cap-llm" }
+# 家族统一 LLM 配置落点：~/.z-biz-tool/llm/config.json + OS 密钥库。
+# 本仓原明文 llm_config.json（api_key 明文）由启动迁移器搬入并抹掉密钥。
+cap-llm-config = { path = "../../z-biz-tool-capability/crates/cap-llm-config" }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
 pdf-extract = "0.12.1"

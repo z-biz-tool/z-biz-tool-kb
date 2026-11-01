@@ -46,9 +46,14 @@ export interface ChatMessage {
 }
 
 export interface LlmConfig {
-  base_url: string;
-  api_key: string;
+  provider: string;
+  baseUrl: string;
   model: string;
+  temperature: number | null;
+  maxTokens: number | null;
+  /** 恒为空串 —— 后端只回「有没有密钥」（hasApiKey），明文不出 Rust。 */
+  apiKey: string;
+  hasApiKey: boolean;
 }
 
 // Tauri 的 invoke 抛出的是 Rust 侧的 String 错误，不是 Error 实例
@@ -270,9 +275,21 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         if (!question) return;
         set({ asking: true, askError: null });
         try {
-          const result = await invoke<{ answer: string; citations: Citation[] }>("ask_question", {
+          const result = await invoke<{
+            answer: string;
+            citations: Citation[];
+            // 2026-11-01 起：AI 失败不再揉进 answer 文本，结构化回传
+            failure: { message: string; hint: string } | null;
+          }>("ask_question", {
             question,
           });
+
+          // LLM 调用失败：把 hint（该怎么做的提示）作为错误显示，
+          // 用户要能区分「AI 失败」与「真的没答案」。
+          if (result.failure) {
+            const f = result.failure;
+            throw new Error(f.hint ? `${f.message}（${f.hint}）` : f.message);
+          }
 
           const assistantMessage: ChatMessage = {
             role: "assistant",
@@ -292,7 +309,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
       loadLlmConfig: async () => {
         try {
-          const config = await invoke<LlmConfig>("get_llm_config");
+          const config = await invoke<LlmConfig>("get_ai_config");
           set({ llmConfig: config, llmConfigError: null });
         } catch (e) {
           set({ llmConfigError: toMessage(e) });
@@ -300,7 +317,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       },
 
       setLlmConfig: async (baseUrl: string, apiKey: string, model: string) => {
-        await invoke("set_llm_config", { baseUrl, apiKey, model });
+        await invoke("save_ai_config", {
+          config: { provider: "", base_url: baseUrl, model, api_key: apiKey },
+        });
         await get().loadLlmConfig();
         set({ showSettings: false });
       },

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Modal, Form, Input, message, Spin, Tag, Tooltip } from "antd";
+import { Button, Modal, message, Spin, Tag, Tooltip } from "antd";
 import {
   UploadOutlined,
   SettingOutlined,
@@ -9,6 +9,11 @@ import {
 } from "@ant-design/icons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useKnowledgeStore, toMessage } from "../stores/knowledgeStore";
+import {
+  KbAiSettingsPanel,
+  loadAiConfigView,
+  type KbAiConfigView,
+} from "./AiSettingsPanelAdapter";
 
 const brandGradient = "linear-gradient(135deg, #667eea 0%, #764ba2 100%)";
 const cardBgGradient = "linear-gradient(135deg, rgba(102,126,234,0.04) 0%, rgba(118,75,162,0.04) 100%)";
@@ -181,45 +186,28 @@ export default function UploadButton() {
 }
 
 // LLM 设置弹窗组件
+//
+// 2026-11-01 起：表单换成共享面板 `z-biz-tool-shared/ai/settings`。
+// 旧表单的三个问题一并消失：
+// 1. **apiKey 强制必填** —— 与后端私网免密钥判据直接矛盾，用户指向
+//    本地网关时被前端拦住，后端的免密钥逻辑永远走不到；
+// 2. **明文 key 回填进表单** —— 旧 `get_llm_config` 把明文整份回传，
+//    密钥在 Rust → IPC → JS 内存 → 表单 DOM 全链路可见；
+// 3. **没有厂商预设与模型列表** —— 用户只能手抄地址与模型名。
 export function LlmSettingsModal() {
-  const [form] = Form.useForm();
   const showSettings = useKnowledgeStore((s) => s.showSettings);
   const setShowSettings = useKnowledgeStore((s) => s.setShowSettings);
-  const llmConfig = useKnowledgeStore((s) => s.llmConfig);
-  const setLlmConfig = useKnowledgeStore((s) => s.setLlmConfig);
-  const llmConfigError = useKnowledgeStore((s) => s.llmConfigError);
-  const [saving, setSaving] = useState(false);
-  type LlmFormValues = { baseUrl: string; apiKey: string; model: string };
+  const [view, setView] = useState<KbAiConfigView | null>(null);
 
-  // antd 的 Esc 只在焦点落在弹层内时生效，这里无条件兜住
   useEffect(() => {
-    if (!showSettings) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !saving) setShowSettings(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [showSettings, saving, setShowSettings]);
-
-  const handleSave = async () => {
-    // validateFields 失败时 antd 已在字段上标红，这里只关心真正的保存异常
-    const values = (await form.validateFields().catch(() => null)) as LlmFormValues | null;
-    if (!values) return;
-    await saveValues(values);
-  };
-
-  const saveValues = async (values: LlmFormValues) => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await setLlmConfig(values.baseUrl, values.apiKey, values.model);
-      message.success("配置已保存");
-    } catch (e) {
-      message.error("保存失败：" + toMessage(e));
-    } finally {
-      setSaving(false);
+    if (showSettings) {
+      loadAiConfigView()
+        .then(setView)
+        .catch(() => setView(null));
+    } else {
+      setView(null);
     }
-  };
+  }, [showSettings]);
 
   return (
     <Modal
@@ -237,16 +225,11 @@ export function LlmSettingsModal() {
         </span>
       }
       open={showSettings}
-      onOk={handleSave}
       onCancel={() => setShowSettings(false)}
-      confirmLoading={saving}
-      okText="保存"
-      cancelText="取消"
+      footer={null}
       destroyOnHidden
-      closable={!saving}
-      keyboard={!saving}
-      mask={{ closable: !saving }}
-      cancelButtonProps={{ disabled: saving }}
+      closable
+      keyboard
       style={{
         borderRadius: 12,
         overflow: "hidden",
@@ -255,69 +238,15 @@ export function LlmSettingsModal() {
         body: { padding: "20px" },
       }}
     >
-      {llmConfigError && (
-        <Alert
-          type="error"
-          showIcon
-          title="读取现有配置失败"
-          description={llmConfigError}
-          style={{ marginBottom: 16 }}
-        />
-      )}
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={saveValues}
-        initialValues={{
-          baseUrl: llmConfig?.base_url || "https://api.openai.com/v1",
-          apiKey: llmConfig?.api_key || "",
-          model: llmConfig?.model || "gpt-4o-mini",
+      <KbAiSettingsPanel
+        view={view}
+        onSaved={() => {
+          loadAiConfigView()
+            .then(setView)
+            .catch(() => {});
+          setShowSettings(false);
         }}
-        key={llmConfig ? llmConfig.base_url : "empty"}
-      >
-        <Form.Item
-          name="baseUrl"
-          label="API Base URL"
-          rules={[{ required: true, message: "请输入 API Base URL" }]}
-          style={{ marginBottom: 16 }}
-        >
-          <Input 
-            placeholder="https://api.openai.com/v1"
-            style={{
-              borderRadius: 6,
-              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
-            }}
-          />
-        </Form.Item>
-        <Form.Item
-          name="apiKey"
-          label="API Key"
-          rules={[{ required: true, message: "请输入 API Key" }]}
-          style={{ marginBottom: 16 }}
-        >
-          <Input.Password 
-            placeholder="sk-..."
-            style={{
-              borderRadius: 6,
-              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
-            }}
-          />
-        </Form.Item>
-        <Form.Item
-          name="model"
-          label="模型名称"
-          rules={[{ required: true, message: "请输入模型名称" }]}
-          style={{ marginBottom: 20 }}
-        >
-          <Input 
-            placeholder="gpt-4o-mini"
-            style={{
-              borderRadius: 6,
-              boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
-            }}
-          />
-        </Form.Item>
-      </Form>
+      />
     </Modal>
   );
 }
