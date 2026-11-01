@@ -17,24 +17,33 @@ import {
   type PresetView,
 } from "z-biz-tool-shared/ai/settings";
 
-/** 本仓后端的草稿形状（`llm_shared.rs::AiConfigDraft`）。 */
+/**
+ * 本仓后端的草稿形状（`llm_shared.rs::AiConfigDraft`）。
+ *
+ * ⚠️ 字段名是 **camelCase**，不是 snake_case —— 嵌套结构体走 serde，
+ * 键名以结构体上的 `#[serde(rename_all = "camelCase")]` 为准；
+ * Tauri 只对**顶层命令参数**做 snake→camel 映射。写 snake_case 的后果
+ * 不是报错，而是 serde **静默丢弃** ⇒ base_url / api_key 全变空串 ⇒
+ * 用户填了密钥却存不进去，且没有任何报错能暴露它。
+ * （2026-11-01 在 db 仓实测嵌套 camel/snake 差异后修正。）
+ */
 interface KbAiConfigDraft {
   provider: string;
-  base_url: string;
+  baseUrl: string;
   model: string;
-  api_key: string;
+  apiKey: string;
   temperature: number | null;
-  max_tokens: number | null;
+  maxTokens: number | null;
 }
 
 function draftToConfig(draft: AiConfigDraft): KbAiConfigDraft {
   return {
     provider: draft.preset,
-    base_url: draft.baseUrl,
+    baseUrl: draft.baseUrl,
     model: draft.model,
-    api_key: draft.apiKey,
+    apiKey: draft.apiKey,
     temperature: draft.temperature ?? null,
-    max_tokens: draft.maxTokens ?? null,
+    maxTokens: draft.maxTokens ?? null,
   };
 }
 
